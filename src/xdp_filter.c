@@ -25,6 +25,7 @@ struct {
 	__uint(max_entries, 300);
 	__type(key, u32);	// IP in host byte order
 	__type(value, u8);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } banned_ips SEC(".maps");
 
 // Fill this map with bpftool
@@ -33,6 +34,7 @@ struct {
 	__uint(max_entries, 10);
 	__type(key, u16);	// Port in big-endian (network) byte order, as that's how we write naturally
 	__type(value, u8);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } watched_ports SEC(".maps");
 
 // Only functions that return a scalar are supported
