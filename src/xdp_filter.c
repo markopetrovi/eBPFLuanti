@@ -32,7 +32,7 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 10);
-	__type(key, u16);	// Port in big-endian (network) byte order, as that's how we write naturally
+	__type(key, u16);	// Port in host byte order, so that it's displayed correctly by bpftool map dump
 	__type(value, u8);
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } watched_ports SEC(".maps");
@@ -130,7 +130,8 @@ int luanti_filter(struct xdp_md *ctx)
 		return XDP_PASS;
 
 	// Filter destination port
-	u8 *is_watched = bpf_map_lookup_elem(&watched_ports, &udp->dest);
+	u16 port = bpf_ntohs(udp->dest);
+	u8 *is_watched = bpf_map_lookup_elem(&watched_ports, &port);
 	if (!is_watched || *is_watched != 1)
 		return XDP_PASS;
 
