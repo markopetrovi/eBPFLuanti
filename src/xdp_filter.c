@@ -13,35 +13,54 @@ struct ip_entry {
 	u64 time;
 };
 
+struct ban_entry {
+	u64 timestamp;
+	u64 duration;
+};
+
+struct ban_record {
+	u64 ban_timestamp;
+	u64 autounban_timestamp;
+	u64 ban_duration;
+	u32 ip;		/* IP in host byte order */
+};
+
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 100);
-	__type(key, u32);	// IP in host byte order
+	__type(key, u32);	/* IP in host byte order */
 	__type(value, struct ip_entry);
 } packet_count SEC(".maps");
 
 struct {
+	__uint(type, BPF_MAP_TYPE_QUEUE);
+	__uint(max_entries, 100);
+	__type(value_size, sizeof(struct ban_record));
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} records SEC(".maps");
+
+struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 300);
-	__type(key, u32);	// IP in host byte order
-	__type(value, u8);
+	__uint(max_entries, 100);
+	__type(key, u32);	/* IP in host byte order */
+	__type(value, struct ban_entry);
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } banned_ips SEC(".maps");
 
-// Fill this map with bpftool
+/* Fill this map with bpftool */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 10);
-	__type(key, u16);	// Port in host byte order, so that it's displayed correctly by bpftool map dump
+	__type(key, u16);	/* Port in host byte order, so that it's displayed correctly by bpftool map dump */
 	__type(value, u8);
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } watched_ports SEC(".maps");
 
-// Only functions that return a scalar are supported
-// Atomic CAS to update time only if someone else didn't already update to a higher value
+/* Only functions that return a scalar are supported */
+/* Atomic CAS to update time only if someone else didn't already update to a higher value */
 static int update_time(u64 now, u64 *time)
 {
-	int retries = 1000;
+	u64 retries = 10000000ULL;
 	u64 old_time;
 	if (!time)
 		return 0;
@@ -53,8 +72,7 @@ static int update_time(u64 now, u64 *time)
 	return 0;
 }
 
-// It's a bit troubling to pass the verifier when this is a separate function
-// Verifier checks each function as a separate program, so it loses trust in the payload bounds checks. Thus payload cannot be the argument.
+/* Verifier checks each function as a separate program, so it loses trust in the payload bounds checks. Thus payload cannot be the argument. */
 static int handle_init_packet(u32 proto_raw, u16 peer_raw, u32 src_ip)
 {
 	u32 proto_id = bpf_ntohl(proto_raw);
@@ -63,29 +81,31 @@ static int handle_init_packet(u32 proto_raw, u16 peer_raw, u32 src_ip)
 	if (proto_id == PROTOCOL_ID && peer_id == PEER_ID_INEXISTENT) {
 		struct ip_entry *entry = bpf_map_lookup_elem(&packet_count, &src_ip);
 		u64 now = bpf_ktime_get_tai_ns();
-		// Return in this if, so that else isn't needed
+		/* Return in this if, so that else isn't needed */
 		if (entry) {
 			u64 old_time = __sync_fetch_and_add(&entry->time, 0);
 			if (now > old_time && now - old_time > IP_COUNT_RESET_NS)
 				goto new_entry;
 
-			// Increment and check threshold
+			/* Increment and check threshold */
 			__sync_fetch_and_add(&entry->count, 1);
 			u64 new_count = __sync_fetch_and_add(&entry->count, 0);
 			if (new_count > BLOCK_THRESHOLD) {
-				// Ban this IP and free the entry, as this handler won't run for it again
-				// Delete might fail, but we don't care as there's no sensible error recovery path, and the entry would be deleted by LRU eventually anyway
-				u8 val = 1;
+				/* Ban this IP and free the entry, as this handler won't run for it again */
+				struct ban_entry val = {
+					.timestamp = now,
+					.duration = -1
+				};
 				bpf_map_update_elem(&banned_ips, &src_ip, &val, BPF_ANY);
 				bpf_map_delete_elem(&packet_count, &src_ip);
 				return XDP_DROP;
 			}
-			// Atomic CAS to update time
+			/* Atomic CAS to update time */
 			update_time(now, &entry->time);
 			return XDP_PASS;
 		}
 new_entry:
-		// Avoid warning: label followed by a declaration is a C23 extension
+		/* Avoid warning: label followed by a declaration is a C23 extension */
 		(void)1;
 		struct ip_entry ent = {
 			.count = 1,
@@ -98,9 +118,23 @@ new_entry:
 
 static int handle_bans(u32 src_ip)
 {
-	u8 *is_banned = bpf_map_lookup_elem(&banned_ips, &src_ip);
-	if (is_banned && *is_banned)
+	/* ban entries modified only using helper functions - no atomic operations needed */
+	struct ban_entry *entry = bpf_map_lookup_elem(&banned_ips, &src_ip);
+	if (entry) {
+		u64 now = bpf_ktime_get_tai_ns();
+		if (entry->timestamp + entry->duration < now) {
+			struct ban_record rec = {
+				.ban_timestamp = entry->timestamp,
+				.autounban_timestamp = now,
+				.ban_duration = entry->duration,
+				.ip = src_ip
+			};
+			bpf_map_delete_elem(&banned_ips, &src_ip);
+			bpf_map_push_elem(&records, &rec, BPF_EXIST);
+			return XDP_PASS;
+		}
 		return XDP_DROP;
+	}
 	return XDP_PASS;
 }
 
