@@ -35,7 +35,7 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
 	__uint(max_entries, 100);
-	__type(value_size, sizeof(struct ban_record));
+	__uint(value_size, sizeof(struct ban_record));
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } records SEC(".maps");
 
