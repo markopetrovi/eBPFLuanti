@@ -122,7 +122,9 @@ static int handle_bans(u32 src_ip)
 	struct ban_entry *entry = bpf_map_lookup_elem(&banned_ips, &src_ip);
 	if (entry) {
 		u64 now = bpf_ktime_get_tai_ns();
-		if (entry->timestamp + entry->duration < now) {
+		u64 expiration_moment = entry->timestamp + entry->duration;
+		/* Expiration moment passed and integer overflow didn't happen */
+		if (expiration_moment < now && expiration_moment > entry->timestamp) {
 			struct ban_record rec = {
 				.ban_timestamp = entry->timestamp,
 				.autounban_timestamp = now,
