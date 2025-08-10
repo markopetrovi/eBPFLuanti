@@ -61,7 +61,7 @@ struct {
 /* __arg_nonnull annotation added in 6.8 */
 int __noinline update_time(u64 now, u64 __arg_nonnull *time)
 {
-	u64 retries = 10000000ULL;
+	int retries = 4000;
 	u64 old_time;
 	do {
 		old_time = __sync_fetch_and_add(time, 0);
