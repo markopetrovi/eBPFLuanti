@@ -13,9 +13,13 @@ struct ip_entry {
 	u64 time;
 };
 
+#define DESC_SIZE 255
+
 struct ban_entry {
 	u64 timestamp;
 	u64 duration;
+	u16 banned_on_last_port;
+	char desc[DESC_SIZE];
 };
 
 struct ban_record {
@@ -23,6 +27,8 @@ struct ban_record {
 	u64 autounban_timestamp;
 	u64 ban_duration;
 	u32 ip;		/* IP in host byte order */
+	u16 banned_on_last_port;
+	char desc[DESC_SIZE];
 };
 
 struct {
@@ -56,6 +62,16 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } watched_ports SEC(".maps");
 
+static __always_inline void safe_strcpy(char *dst, const char *src, u32 dst_size)
+{
+	for (u32 i = 0; i < dst_size; i++) {
+		char c = src[i];
+		dst[i] = c;
+		if (c == '\0')
+			break;
+	}
+}
+
 /* Global functions can only return scalar values */
 /* Atomic CAS to update time only if someone else didn't already update to a higher value */
 /* __arg_nonnull annotation added in 6.8 */
@@ -72,7 +88,7 @@ int __noinline update_time(u64 now, u64 __arg_nonnull *time)
 }
 
 /* Verifier checks each global (non-static) function as a separate program, so it loses trust in the payload bounds checks. Thus payload cannot be the argument. */
-int __noinline handle_init_packet(u32 proto_raw, u16 peer_raw, u32 src_ip)
+int __noinline handle_init_packet(u32 proto_raw, u16 peer_raw, u32 src_ip, u16 src_port)
 {
 	u32 proto_id = bpf_ntohl(proto_raw);
 	u16 peer_id = bpf_ntohs(peer_raw);
@@ -93,8 +109,10 @@ int __noinline handle_init_packet(u32 proto_raw, u16 peer_raw, u32 src_ip)
 				/* Ban this IP and free the entry, as this handler won't run for it again */
 				struct ban_entry val = {
 					.timestamp = now,
-					.duration = -1
+					.duration = -1,
+					.banned_on_last_port = src_port
 				};
+				safe_strcpy(val.desc, "Init packet spam, autoban", DESC_SIZE);
 				bpf_map_update_elem(&banned_ips, &src_ip, &val, BPF_ANY);
 				bpf_map_delete_elem(&packet_count, &src_ip);
 				return XDP_DROP;
@@ -128,8 +146,10 @@ int __noinline handle_bans(u32 src_ip)
 				.ban_timestamp = entry->timestamp,
 				.autounban_timestamp = now,
 				.ban_duration = entry->duration,
+				.banned_on_last_port = entry->banned_on_last_port,
 				.ip = src_ip
 			};
+			safe_strcpy(rec.desc, entry->desc, DESC_SIZE);
 			bpf_map_delete_elem(&banned_ips, &src_ip);
 			bpf_map_push_elem(&records, &rec, BPF_EXIST);
 			return XDP_PASS;
@@ -189,7 +209,7 @@ int luanti_filter(struct xdp_md *ctx)
 	u16 peer_raw;
 	__builtin_memcpy(&proto_raw, payload, sizeof(proto_raw));
 	__builtin_memcpy(&peer_raw, payload + sizeof(proto_raw), sizeof(peer_raw));
-	ret = handle_init_packet(proto_raw, peer_raw, src_ip);
+	ret = handle_init_packet(proto_raw, peer_raw, src_ip, port);
 	if (ret == XDP_DROP)
 		return ret;
 
