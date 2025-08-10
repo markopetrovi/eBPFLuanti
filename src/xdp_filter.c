@@ -56,14 +56,13 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } watched_ports SEC(".maps");
 
-/* Only functions that return a scalar are supported */
+/* Global functions can only return scalar values */
 /* Atomic CAS to update time only if someone else didn't already update to a higher value */
-static int update_time(u64 now, u64 *time)
+/* __arg_nonnull annotation added in 6.8 */
+int __noinline update_time(u64 now, u64 __arg_nonnull *time)
 {
 	u64 retries = 10000000ULL;
 	u64 old_time;
-	if (!time)
-		return 0;
 	do {
 		old_time = __sync_fetch_and_add(time, 0);
 		if (old_time >= now)
@@ -72,8 +71,8 @@ static int update_time(u64 now, u64 *time)
 	return 0;
 }
 
-/* Verifier checks each function as a separate program, so it loses trust in the payload bounds checks. Thus payload cannot be the argument. */
-static int handle_init_packet(u32 proto_raw, u16 peer_raw, u32 src_ip)
+/* Verifier checks each global (non-static) function as a separate program, so it loses trust in the payload bounds checks. Thus payload cannot be the argument. */
+int __noinline handle_init_packet(u32 proto_raw, u16 peer_raw, u32 src_ip)
 {
 	u32 proto_id = bpf_ntohl(proto_raw);
 	u16 peer_id = bpf_ntohs(peer_raw);
@@ -116,7 +115,7 @@ new_entry:
 	return XDP_PASS;
 }
 
-static int handle_bans(u32 src_ip)
+int __noinline handle_bans(u32 src_ip)
 {
 	/* ban entries modified only using helper functions - no atomic operations needed */
 	struct ban_entry *entry = bpf_map_lookup_elem(&banned_ips, &src_ip);
