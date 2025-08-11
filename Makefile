@@ -1,10 +1,10 @@
 # Compilers and flags
 BPF_CC = clang
-BPF_CFLAGS = -O3 -g -mcpu=v3 -target bpf
+BPF_CFLAGS = -O3 -g -mcpu=v3 -Wall -target bpf
 BPF_TARGET = bin/xdp_filter.o
 
 HOST_CC = gcc
-HOST_CFLAGS = -march=native -mtune=native -O3
+HOST_CFLAGS = -march=native -mtune=native -Wall -O3
 HOST_TARGET = bin/eBPFtool
 
 # Source directories and files
