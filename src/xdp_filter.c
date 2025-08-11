@@ -1,4 +1,4 @@
-#include "vmlinux.h"
+#include "../include/vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #define ETH_P_IP		0x0800
@@ -109,7 +109,7 @@ int __noinline handle_init_packet(u32 proto_raw, u16 peer_raw, u32 src_ip, u16 s
 				/* Ban this IP and free the entry, as this handler won't run for it again */
 				struct ban_entry val = {
 					.timestamp = now,
-					.duration = -1,
+					.duration = 3600000000000ULL,   /* 1 hour */
 					.banned_on_last_port = src_port
 				};
 				safe_strcpy(val.desc, "Init packet spam, autoban", DESC_SIZE);
