@@ -106,12 +106,81 @@ void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 	if (!strcmp(argv[1], "--help")) {
 		printf("Supported commands:\n");
 		printf("dump_ports: Write all currently watched ports\n");
+		printf("add_port <port>: Add port to the watchlist\n");
+		printf("rm_port <port>: Remove port from the watchlist\n");
 		exit(0);
 	}
 	const char *map_dir = getconfig("MAP_DIR", "/sys/fs/bpf/xdp/globals");
+
 	if (!strcmp(argv[1], "dump_ports")) {
 		struct map_fds fds = open_maps(map_dir, WATCHED_PORTS_MAP);
 		dump_ports(fds.portfd);
+		exit(0);
+	}
+
+	if (!strcmp(argv[1], "add_port")) {
+		if (argc < 3 || argc > 65535 + 2) {
+			fprintf(stderr, "Usage: %s add_port <port1> [port2] ... [portN]\n", argv[0]);
+			exit(1);
+		}
+		struct map_fds fds = open_maps(map_dir, WATCHED_PORTS_MAP);
+		union bpf_attr attr;
+		memset(&attr, 0, sizeof(union bpf_attr));
+		attr.map_fd = fds.portfd;
+		u8 value = 1;
+		attr.value = (u64) &value;
+		attr.flags = BPF_NOEXIST;
+		for (int i = 2; i < argc; i++) {	
+			u16 port = atoi(argv[i]);
+			if (!port) {
+				fprintf(stderr, "Failed to parse \"%s\"\n", argv[i]);
+				continue;
+			}
+			attr.key = (u64) &port;
+			if (syscall(SYS_bpf, BPF_MAP_UPDATE_ELEM, &attr, sizeof(union bpf_attr))) {
+				if (errno == EEXIST) {
+					fprintf(stderr, "Port %s is already watched.\n", argv[i]);
+					continue;
+				}
+				perror("BPF_MAP_UPDATE_ELEM watched_ports");
+				exit(1);
+			}
+		}
+		exit(0);
+	}
+
+	if (!strcmp(argv[1], "rm_port")) {
+		if (argc < 3 || argc > 65535 + 2) {
+			fprintf(stderr, "Usage: %s rm_port <port1> [port2] ... [portN]\n", argv[0]);
+			exit(1);
+		}
+		struct map_fds fds = open_maps(map_dir, WATCHED_PORTS_MAP);
+		union bpf_attr attr;
+		memset(&attr, 0, sizeof(union bpf_attr));
+		attr.batch.map_fd = fds.portfd;
+		u16 *ports = malloc(sizeof(u16) * (argc-2));
+		if (!ports)
+			exit(ENOMEM);
+		attr.batch.keys = (u64) ports;
+		for (int i = 2; i < argc; i++) {
+			ports[i-2] = atoi(argv[i]);
+			if (!ports[i-2]) {
+				fprintf(stderr, "Failed to parse \"%s\"\n", argv[i]);
+				continue;
+			}
+			attr.batch.count++;
+		}
+		unsigned int old_count = attr.batch.count;
+		if (syscall(SYS_bpf, BPF_MAP_DELETE_BATCH, &attr, sizeof(union bpf_attr))) {
+			if (errno == ENOENT) {
+				fprintf(stderr, "Some ports were not found in the watchlist.\n");
+			}
+			else {
+				perror("BPF_MAP_DELETE_BATCH watched_ports");
+				exit(1);
+			}
+		}
+		printf("Deleted %u out of parsed %u ports\n", attr.batch.count, old_count);
 		exit(0);
 	}
 
