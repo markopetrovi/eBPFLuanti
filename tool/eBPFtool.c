@@ -32,7 +32,7 @@ struct map_fds open_maps(const char *map_dir, int map_ids)
 {
 	struct map_fds fds;
 	union bpf_attr attr;
-	
+
 	int dirfd = open(map_dir, O_PATH);
 	if (dirfd < 0) {
 		perror("open(map_dir)");
@@ -67,7 +67,7 @@ struct map_fds open_maps(const char *map_dir, int map_ids)
 		}
 	}
 	close(dirfd);
-	
+
 	return fds;
 }
 
@@ -84,6 +84,7 @@ void dump_ports(int portfd)
 		attr.batch.keys = (u64) keys;
 		attr.batch.values = (u64) values;
 		printf("Currently watched ports:\n");
+		int saved_errno = 0;
 		do {
 			attr.batch.count = 10;
 			/* ENOENT means we just didn't have enough entries to fill a batch of 10 */
@@ -91,12 +92,13 @@ void dump_ports(int portfd)
 				perror("bpf(BPF_MAP_LOOKUP_BATCH watched_ports)");
 				exit(1);
 			}
+			saved_errno = errno;
 			for (int i = 0; i < attr.batch.count; i++) {
 				if (values[i] == 1)
 					printf("%u\n", keys[i]);
 			}
 			* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
-		} while (attr.batch.count != 0);
+		} while (saved_errno != ENOENT);
 }
 
 void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
@@ -112,7 +114,7 @@ void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		dump_ports(fds.portfd);
 		exit(0);
 	}
-	
+
 	fprintf(stderr, "Unknown command \"%s\"\n", argv[1]);
 	fprintf(stderr, "Usage: %s <command>\nTry %s --help\n", argv[0], argv[0]);
 	exit(1);
@@ -127,5 +129,5 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "Usage: eBPFtool <command>\nTry eBPFtool --help\n");
 		return 1;
 	}
-	dispatch_command(argc, argv);	
+	dispatch_command(argc, argv);
 }
