@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>
 #define u8 uint8_t
 #define u16 uint16_t
 #define u32 uint32_t
@@ -85,7 +86,8 @@ void dump_ports(int portfd)
 		printf("Currently watched ports:\n");
 		do {
 			attr.batch.count = 10;
-			if (syscall(SYS_bpf, BPF_MAP_LOOKUP_BATCH, &attr, sizeof(union bpf_attr))) {
+			/* ENOENT means we just didn't have enough entries to fill a batch of 10 */
+			if (syscall(SYS_bpf, BPF_MAP_LOOKUP_BATCH, &attr, sizeof(union bpf_attr)) && errno != ENOENT) {
 				perror("bpf(BPF_MAP_LOOKUP_BATCH watched_ports)");
 				exit(1);
 			}
