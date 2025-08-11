@@ -1,3 +1,7 @@
+# Dynamically generated content
+/bin/
+/include/
+
 # Prerequisites
 *.d
 
