@@ -76,9 +76,10 @@ void dump_ports(int portfd)
 		memset(&attr, 0, sizeof(union bpf_attr));
 		u16 keys[10];	/* Ports */
 		u8 values[10];	/* Should all be 1 */
+		u32 batch_params[2] = {0, 0};
 		attr.batch.map_fd = portfd;
-		attr.batch.in_batch = 0;
-		attr.batch.out_batch = 0;
+		attr.batch.in_batch = (u64) &batch_params[0];
+		attr.batch.out_batch = (u64) &batch_params[1];
 		attr.batch.keys = (u64) keys;
 		attr.batch.values = (u64) values;
 		printf("Currently watched ports:\n");
@@ -92,7 +93,7 @@ void dump_ports(int portfd)
 				if (values[i] == 1)
 					printf("%u\n", keys[i]);
 			}
-			attr.batch.in_batch = attr.batch.out_batch;
+			* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
 		} while (attr.batch.count != 0);
 }
 
