@@ -114,6 +114,7 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "Usage: %s <command>\nTry %s --help\n", argv[0], argv[0]);
 		else
 			fprintf(stderr, "Usage: eBPFtool <command>\nTry eBPFtool --help\n");
+		return 1;
 	}
 	dispatch_command(argc, argv);	
 }
