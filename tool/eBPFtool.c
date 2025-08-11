@@ -30,30 +30,38 @@ struct map_fds {
 struct map_fds open_maps(const char *map_dir, int map_ids)
 {
 	struct map_fds fds;
+	union bpf_attr attr;
 	
 	int dirfd = open(map_dir, O_PATH);
 	if (dirfd < 0) {
 		perror("open(map_dir)");
 		exit(1);
 	}
+	memset(&attr, 0, sizeof(union bpf_attr));
+	attr.path_fd = dirfd;
+	attr.file_flags = BPF_F_PATH_FD;
+
 	if (map_ids & BANNED_IPS_MAP) {
-		fds.banfd = openat(dirfd, "banned_ips", O_RDWR);
+		attr.pathname = (u64) "banned_ips";
+		fds.banfd = syscall(SYS_bpf, BPF_OBJ_GET, &attr, sizeof(union bpf_attr));
 		if (fds.banfd < 0) {
-			perror("open(banned_ips)");
+			perror("BPF_OBJ_GET banned_ips");
 			exit(1);
 		}
 	}
 	if (map_ids & WATCHED_PORTS_MAP) {
-		fds.portfd = openat(dirfd, "watched_ports", O_RDWR);
+		attr.pathname = (u64) "watched_ports";
+		fds.portfd = syscall(SYS_bpf, BPF_OBJ_GET, &attr, sizeof(union bpf_attr));
 		if (fds.portfd < 0) {
-			perror("open(watched_ports)");
+			perror("BPF_OBJ_GET watched_ports");
 			exit(1);
 		}
 	}
 	if (map_ids & RECORDS_MAP) {
-		fds.recordfd = openat(dirfd, "records", O_RDONLY);
+		attr.pathname = (u64) "records";
+		fds.recordfd = syscall(SYS_bpf, BPF_OBJ_GET, &attr, sizeof(union bpf_attr));
 		if (fds.recordfd < 0) {
-			perror("open(records)");
+			perror("BPF_OBJ_GET records");
 			exit(1);
 		}
 	}
