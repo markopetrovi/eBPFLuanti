@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <linux/bpf.h>
+#include <sys/syscall.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -68,14 +69,14 @@ void dump_ports(int portfd)
 		u16 keys[10];	/* Ports */
 		u8 values[10];	/* Should all be 1 */
 		attr.batch.map_fd = portfd;
-		attr.batch.in_batch = NULL;
-		attr.batch.out_batch = NULL;
-		attr.batch.keys = keys;
-		attr.batch.values = values;
+		attr.batch.in_batch = 0;
+		attr.batch.out_batch = 0;
+		attr.batch.keys = (u64) keys;
+		attr.batch.values = (u64) values;
 		printf("Currently watched ports:\n");
 		do {
 			attr.batch.count = 10;
-			if (bpf(BPF_MAP_LOOKUP_BATCH, &attr, sizeof(union bpf_attr))) {
+			if (syscall(SYS_bpf, BPF_MAP_LOOKUP_BATCH, &attr, sizeof(union bpf_attr))) {
 				perror("bpf(BPF_MAP_LOOKUP_BATCH watched_ports)");
 				exit(1);
 			}
