@@ -144,6 +144,29 @@ static int get_tai_offset()
 	return buf.tai;
 }
 
+/* Return a (-1)-terminated array of indexes for bans that should be removed */
+static int* find_expired_bans(struct ban_entry *entries, int count)
+{
+	struct timespec ts;
+	if (clock_gettime(CLOCK_TAI, &ts)) {
+		perror("clock_gettime(CLOCK_TAI)");
+		exit(1);
+	}
+	u64 now = (u64)ts.tv_nsec + (1000000000UL * (u64)ts.tv_sec);
+	int *results = malloc((count+1)*sizeof(int));
+	if (!results)
+		exit(ENOMEM);
+	int res_count = 0;
+	for (int i = 0; i < count; i++) {
+		u64 expiration_moment = entries[i].timestamp + entries[i].duration;
+		/* Expiration moment passed and integer overflow didn't happen */
+		if (expiration_moment < now && expiration_moment > entries[i].timestamp)
+			results[res_count++] = i;
+	}
+	results[res_count] = -1;
+	return results;
+}
+
 static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 {
 	if (!strcmp(argv[1], "--help")) {
@@ -153,6 +176,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		printf("rm_port <port>: Remove port from the watchlist\n");
 		printf("ban <port> <ip> <duration> <reason>: IP-ban this user on all ports. The <port> argument just shows where they were last spotted.\n");
 		printf("unban <ip>: Unban this IP and print the data needed by caller to assemble a ban record\n");
+		printf("list_bans: List all bans currently in effect\n");
 		exit(0);
 	}
 	const char *map_dir = getconfig("MAP_DIR", "/sys/fs/bpf/xdp/globals");
@@ -308,18 +332,10 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				perror("BPF_MAP_LOOKUP_AND_DELETE_ELEM banned_ips");
 			exit(1);
 		}
-		/* Check if the ban was expired */
-		bool is_expired = false;
-		struct timespec ts;
-		if (clock_gettime(CLOCK_TAI, &ts)) {
-			perror("clock_gettime(CLOCK_TAI)");
-			exit(1);
-		}
-		u64 now = (u64)ts.tv_nsec + (1000000000UL * (u64)ts.tv_sec);
-		u64 expiration_moment = entry.timestamp + entry.duration;
-		/* Expiration moment passed and integer overflow didn't happen */
-		if (expiration_moment < now && expiration_moment > entry.timestamp)
-			is_expired = true;
+
+		int *res = find_expired_bans(&entry, 1);
+		bool is_expired = (res == 0);
+
 		/* Convert to seconds and Unix time */
 		entry.duration /= 1000000000ULL;
 		entry.timestamp = (entry.timestamp / 1000000000UL) - get_tai_offset();
