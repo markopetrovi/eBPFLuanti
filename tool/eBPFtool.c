@@ -323,13 +323,13 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		/* Convert to seconds and Unix time */
 		entry.duration /= 1000000000ULL;
 		entry.timestamp = (entry.timestamp / 1000000000UL) - get_tai_offset();
-		char *timestamp_str = ctime(entry.timestamp);
+		char *timestamp_str = ctime(&entry.timestamp);
 		if (!timestamp_str) {
 			perror("ctime");
 			exit(1);
 		}
 		printf("Timestamp: %s\n", timestamp_str);
-		printf("Duration: %llu\n", entry.duration);
+		printf("Duration: %lu\n", entry.duration);
 		printf("Description: %s\n", entry.desc);
 		if (is_expired)
 			printf("Ban for %s had already expired and was pending removal.\n", argv[2]);
