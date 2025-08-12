@@ -232,7 +232,8 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				fprintf(stderr, "Found unrecognized character: %c", *endptr);
 			exit(1);
 		}
-		strncpy(entry.desc, argv[5], DESC_SIZE);
+		strncpy(entry.desc, argv[5], DESC_SIZE-1);
+		entry.desc[DESC_SIZE-1] = '\0';
 		struct timespec ts;
 		if (clock_gettime(CLOCK_TAI, &ts)) {
 			perror("clock_gettime(CLOCK_TAI)");
