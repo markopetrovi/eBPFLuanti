@@ -10,6 +10,8 @@
 #include <stdint.h>
 #include <errno.h>
 #include <time.h>
+#include <sys/timex.h>
+#include <stdbool.h>
 #define u8 uint8_t
 #define u16 uint16_t
 #define u32 uint32_t
@@ -42,6 +44,15 @@ union ipv4_addr {
 struct ban_entry {
 	u64 timestamp;
 	u64 duration;
+	u16 banned_on_last_port;
+	char desc[DESC_SIZE];
+};
+
+struct ban_record {
+	u64 ban_timestamp;
+	u64 autounban_timestamp;
+	u64 ban_duration;
+	u32 ip;		/* IP in host byte order */
 	u16 banned_on_last_port;
 	char desc[DESC_SIZE];
 };
@@ -119,6 +130,20 @@ static void dump_ports(int portfd)
 	} while (saved_errno != ENOENT);
 }
 
+static int get_tai_offset()
+{
+	struct timex buf;
+	memset(&buf, 0, sizeof(struct timex));
+	int ret = adjtimex(&buf);
+	if (ret == -1) {
+		perror("adjtimex");
+		exit(1);
+	}
+	if (ret == TIME_ERROR)
+		fprintf(stderr, "Warning: System clock isn't properly synchronized.\n");
+	return buf.tai;
+}
+
 static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 {
 	if (!strcmp(argv[1], "--help")) {
@@ -127,6 +152,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		printf("add_port <port>: Add port to the watchlist\n");
 		printf("rm_port <port>: Remove port from the watchlist\n");
 		printf("ban <port> <ip> <duration> <reason>: IP-ban this user on all ports. The <port> argument just shows where they were last spotted.\n");
+		printf("unban <ip>: Unban this IP and print the data needed by caller to assemble a ban record\n");
 		exit(0);
 	}
 	const char *map_dir = getconfig("MAP_DIR", "/sys/fs/bpf/xdp/globals");
@@ -149,7 +175,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		u8 value = 1;
 		attr.value = (u64) &value;
 		attr.flags = BPF_NOEXIST;
-		for (int i = 2; i < argc; i++) {	
+		for (int i = 2; i < argc; i++) {
 			int int_port = atoi(argv[i]);
 			if (int_port <= 0 || int_port > 65535) {
 				fprintf(stderr, "Failed to parse \"%s\"\n", argv[i]);
@@ -207,7 +233,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 
 	if (!strcmp(argv[1], "ban")) {
 		if (argc != 6) {
-			fprintf(stderr, "Usage: ban <port> <ip> <duration> <reason>\n");
+			fprintf(stderr, "Usage: %s ban <port> <ip> <duration> <reason>\n", argv[0]);
 			exit(1);
 		}
 		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
@@ -254,6 +280,62 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				perror("BPF_MAP_UPDATE_ELEM watched_ports");
 			exit(1);
 		}
+		exit(0);
+	}
+
+	if (!strcmp(argv[1], "unban")) {
+		if (argc != 3) {
+			fprintf(stderr, "Usage: %s unban <ip>\n", argv[0]);
+			exit(1);
+		}
+		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
+		struct in_addr addr;
+		if (inet_pton(AF_INET, argv[2], &addr) != 1) {
+			fprintf(stderr, "Invalid IPv4 address %s\n", argv[3]);
+			exit(1);
+		}
+		u32 key = ntohl(addr.s_addr);
+		union bpf_attr attr;
+		memset(&attr, 0, sizeof(union bpf_attr));
+		struct ban_entry entry;
+		attr.map_fd = fds.banfd;
+		attr.value = (u64) &entry;
+		attr.key = (u64) &key;
+		if (syscall(SYS_bpf, BPF_MAP_LOOKUP_AND_DELETE_ELEM, &attr, sizeof(union bpf_attr))) {
+			if (errno == ENOENT)
+				fprintf(stderr, "IP %s isn't banned.\n", argv[2]);
+			else
+				perror("BPF_MAP_LOOKUP_AND_DELETE_ELEM banned_ips");
+			exit(1);
+		}
+		/* Check if the ban was expired */
+		bool is_expired = false;
+		struct timespec ts;
+		if (clock_gettime(CLOCK_TAI, &ts)) {
+			perror("clock_gettime(CLOCK_TAI)");
+			exit(1);
+		}
+		u64 now = (u64)ts.tv_nsec + (1000000000UL * (u64)ts.tv_sec);
+		u64 expiration_moment = entry.timestamp + entry.duration;
+		/* Expiration moment passed and integer overflow didn't happen */
+		if (expiration_moment < now && expiration_moment > entry.timestamp)
+			is_expired = true;
+		/* Convert to seconds and Unix time */
+		entry.duration /= 1000000000ULL;
+		entry.timestamp = (entry.timestamp / 1000000000UL) - get_tai_offset();
+		char *timestamp_str = ctime(entry.timestamp);
+		if (!timestamp_str) {
+			perror("ctime");
+			exit(1);
+		}
+		printf("Timestamp: %s\n", timestamp_str);
+		printf("Duration: %llu\n", entry.duration);
+		printf("Description: %s\n", entry.desc);
+		if (is_expired)
+			printf("Ban for %s had already expired and was pending removal.\n", argv[2]);
+		else
+			printf("IP %s unbanned\n", argv[2]);
+
 		exit(0);
 	}
 
