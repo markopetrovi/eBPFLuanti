@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <linux/bpf.h>
 #include <sys/syscall.h>
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -8,12 +9,13 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
+#include <time.h>
 #define u8 uint8_t
 #define u16 uint16_t
 #define u32 uint32_t
 #define u64 uint64_t
 
-const char *getconfig(const char *name, const char *default_val)
+static const char *getconfig(const char *name, const char *default_val)
 {
 	const char *val = getenv(name);
 	return val ? val : default_val;
@@ -28,7 +30,23 @@ struct map_fds {
 	int banfd, portfd, recordfd;
 };
 
-struct map_fds open_maps(const char *map_dir, int map_ids)
+union ipv4_addr {
+    uint32_t addr;
+    struct {
+        uint8_t a, b, c, d;
+    };
+};
+
+#define DESC_SIZE 255
+
+struct ban_entry {
+	u64 timestamp;
+	u64 duration;
+	u16 banned_on_last_port;
+	char desc[DESC_SIZE];
+};
+
+static struct map_fds open_maps(const char *map_dir, int map_ids)
 {
 	struct map_fds fds;
 	union bpf_attr attr;
@@ -71,43 +89,44 @@ struct map_fds open_maps(const char *map_dir, int map_ids)
 	return fds;
 }
 
-void dump_ports(int portfd)
+static void dump_ports(int portfd)
 {
-		union bpf_attr attr;
-		memset(&attr, 0, sizeof(union bpf_attr));
-		u16 keys[10];	/* Ports */
-		u8 values[10];	/* Should all be 1 */
-		u32 batch_params[2] = {0, 0};
-		attr.batch.map_fd = portfd;
-		attr.batch.in_batch = (u64) &batch_params[0];
-		attr.batch.out_batch = (u64) &batch_params[1];
-		attr.batch.keys = (u64) keys;
-		attr.batch.values = (u64) values;
-		printf("Currently watched ports:\n");
-		int saved_errno = 0;
-		do {
-			attr.batch.count = 10;
-			/* ENOENT means we just didn't have enough entries to fill a batch of 10 */
-			if (syscall(SYS_bpf, BPF_MAP_LOOKUP_BATCH, &attr, sizeof(union bpf_attr)) && errno != ENOENT) {
-				perror("bpf(BPF_MAP_LOOKUP_BATCH watched_ports)");
-				exit(1);
-			}
-			saved_errno = errno;
-			for (int i = 0; i < attr.batch.count; i++) {
-				if (values[i] == 1)
-					printf("%u\n", keys[i]);
-			}
-			* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
-		} while (saved_errno != ENOENT);
+	union bpf_attr attr;
+	memset(&attr, 0, sizeof(union bpf_attr));
+	u16 keys[10];	/* Ports */
+	u8 values[10];	/* Should all be 1 */
+	u32 batch_params[2] = {0, 0};
+	attr.batch.map_fd = portfd;
+	attr.batch.in_batch = (u64) &batch_params[0];
+	attr.batch.out_batch = (u64) &batch_params[1];
+	attr.batch.keys = (u64) keys;
+	attr.batch.values = (u64) values;
+	printf("Currently watched ports:\n");
+	int saved_errno = 0;
+	do {
+		attr.batch.count = 10;
+		/* ENOENT means we just didn't have enough entries to fill a batch of 10 */
+		if (syscall(SYS_bpf, BPF_MAP_LOOKUP_BATCH, &attr, sizeof(union bpf_attr)) && errno != ENOENT) {
+			perror("bpf(BPF_MAP_LOOKUP_BATCH watched_ports)");
+			exit(1);
+		}
+		saved_errno = errno;
+		for (int i = 0; i < attr.batch.count; i++) {
+			if (values[i] == 1)
+				printf("%u\n", keys[i]);
+		}
+		* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
+	} while (saved_errno != ENOENT);
 }
 
-void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
+static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 {
 	if (!strcmp(argv[1], "--help")) {
 		printf("Supported commands:\n");
 		printf("dump_ports: Write all currently watched ports\n");
 		printf("add_port <port>: Add port to the watchlist\n");
 		printf("rm_port <port>: Remove port from the watchlist\n");
+		printf("ban <port> <ip> <duration> <reason>: IP-ban this user on all ports. The <port> argument just shows where they were last spotted.\n");
 		exit(0);
 	}
 	const char *map_dir = getconfig("MAP_DIR", "/sys/fs/bpf/xdp/globals");
@@ -131,11 +150,12 @@ void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		attr.value = (u64) &value;
 		attr.flags = BPF_NOEXIST;
 		for (int i = 2; i < argc; i++) {	
-			u16 port = atoi(argv[i]);
-			if (!port) {
+			int int_port = atoi(argv[i]);
+			if (int_port <= 0 || int_port > 65535) {
 				fprintf(stderr, "Failed to parse \"%s\"\n", argv[i]);
 				continue;
 			}
+			u16 port = int_port;
 			attr.key = (u64) &port;
 			if (syscall(SYS_bpf, BPF_MAP_UPDATE_ELEM, &attr, sizeof(union bpf_attr))) {
 				if (errno == EEXIST) {
@@ -163,11 +183,12 @@ void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			exit(ENOMEM);
 		attr.batch.keys = (u64) ports;
 		for (int i = 2; i < argc; i++) {
-			ports[i-2] = atoi(argv[i]);
-			if (!ports[i-2]) {
+			int port = atoi(argv[i]);
+			if (port <= 0 || port > 65535) {
 				fprintf(stderr, "Failed to parse \"%s\"\n", argv[i]);
 				continue;
 			}
+			ports[i-2] = port;
 			attr.batch.count++;
 		}
 		unsigned int old_count = attr.batch.count;
@@ -181,6 +202,57 @@ void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			}
 		}
 		printf("Deleted %u out of parsed %u ports\n", attr.batch.count, old_count);
+		exit(0);
+	}
+
+	if (!strcmp(argv[1], "ban")) {
+		if (argc != 6) {
+			fprintf(stderr, "Usage: ban <port> <ip> <duration> <reason>\n");
+			exit(1);
+		}
+		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
+		struct ban_entry entry;
+		int port = atoi(argv[2]);
+		if (port <= 0 || port > 65535) {
+			fprintf(stderr, "Invalid port %s\n", argv[2]);
+			exit(1);
+		}
+		entry.banned_on_last_port = port;
+		struct in_addr addr;
+		if (inet_pton(AF_INET, argv[3], &addr) != 1) {
+			fprintf(stderr, "Invalid IPv4 address %s\n", argv[3]);
+			exit(1);
+		}
+		u32 key = ntohl(addr.s_addr);
+		char *endptr;
+		entry.duration = strtoull(argv[4], &endptr, 10);
+		if (!entry.duration || *endptr != '\0') {
+			fprintf(stderr, "Failed to parse ban duration %s\n", argv[4]);
+			if (*endptr != '\0')
+				fprintf(stderr, "Found unrecognized character: %c", *endptr);
+			exit(1);
+		}
+		strncpy(entry.desc, argv[5], DESC_SIZE);
+		struct timespec ts;
+		if (clock_gettime(CLOCK_TAI, &ts)) {
+			perror("clock_gettime(CLOCK_TAI)");
+			exit(1);
+		}
+		entry.timestamp = (u64)ts.tv_nsec + (1000000000UL * (u64)ts.tv_sec);
+
+		union bpf_attr attr;
+		memset(&attr, 0, sizeof(union bpf_attr));
+		attr.map_fd = fds.banfd;
+		attr.value = (u64) &entry;
+		attr.flags = BPF_NOEXIST;
+		attr.key = (u64) &key;
+		if (syscall(SYS_bpf, BPF_MAP_UPDATE_ELEM, &attr, sizeof(union bpf_attr))) {
+			if (errno == EEXIST)
+				fprintf(stderr, "IP %s was already banned.\n", argv[3]);
+			else
+				perror("BPF_MAP_UPDATE_ELEM watched_ports");
+			exit(1);
+		}
 		exit(0);
 	}
 
