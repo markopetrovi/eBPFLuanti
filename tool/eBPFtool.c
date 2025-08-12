@@ -323,7 +323,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		/* Convert to seconds and Unix time */
 		entry.duration /= 1000000000ULL;
 		entry.timestamp = (entry.timestamp / 1000000000UL) - get_tai_offset();
-		char *timestamp_str = ctime(&entry.timestamp);
+		char *timestamp_str = ctime((long*)&entry.timestamp);
 		if (!timestamp_str) {
 			perror("ctime");
 			exit(1);
