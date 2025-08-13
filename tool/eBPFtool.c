@@ -195,7 +195,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 	const char *map_dir = getconfig("MAP_DIR", "/sys/fs/bpf/xdp/globals");
 
 	if (!strcmp(argv[1], "dump_ports")) {
-		if (argc != 3) {
+		if (argc != 2) {
 			fprintf(stderr, "Usage: %s dump_ports\n", argv[0]);
 			exit(1);
 		}
@@ -366,7 +366,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 	}
 
 	if (!strcmp(argv[1], "list_bans")) {
-		if (argc != 3) {
+		if (argc != 2) {
 			fprintf(stderr, "Usage: %s list_bans\n", argv[0]);
 			exit(1);
 		}
