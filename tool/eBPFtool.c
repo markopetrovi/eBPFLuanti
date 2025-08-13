@@ -16,6 +16,7 @@
 #define u16 uint16_t
 #define u32 uint32_t
 #define u64 uint64_t
+#define NANOSECONDS_PER_SECOND 1000000000UL
 
 static const char *getconfig(const char *name, const char *default_val)
 {
@@ -152,7 +153,7 @@ static int* find_expired_bans(struct ban_entry *entries, int count)
 		perror("clock_gettime(CLOCK_TAI)");
 		exit(1);
 	}
-	u64 now = (u64)ts.tv_nsec + (1000000000UL * (u64)ts.tv_sec);
+	u64 now = (u64)ts.tv_nsec + (NANOSECONDS_PER_SECOND * (u64)ts.tv_sec);
 	int *results = malloc((count+1)*sizeof(int));
 	if (!results)
 		exit(ENOMEM);
@@ -170,8 +171,8 @@ static int* find_expired_bans(struct ban_entry *entries, int count)
 static char *prepare_entry_for_printing(struct ban_entry *entry)
 {
 	/* Convert to seconds and Unix time */
-	entry->duration /= 1000000000ULL;
-	entry->timestamp = (entry->timestamp / 1000000000UL) - get_tai_offset();
+	entry->duration /= NANOSECONDS_PER_SECOND;
+	entry->timestamp = (entry->timestamp / NANOSECONDS_PER_SECOND) - get_tai_offset();
 	char *timestamp_str = ctime((long*)&entry->timestamp);
 	if (!timestamp_str) {
 		perror("ctime");
@@ -215,7 +216,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		printf("dump_ports: Write all currently watched ports\n");
 		printf("add_port <port>: Add port to the watchlist\n");
 		printf("rm_port <port>: Remove port from the watchlist\n");
-		printf("ban <port> <ip> <duration> <reason>: IP-ban this user on all ports. The <port> argument just shows where they were last spotted.\n");
+		printf("ban <port> <ip> <duration_seconds> <reason>: IP-ban this user on all ports. The <port> argument just shows where they were last spotted.\n");
 		printf("unban <ip>: Unban this IP and print the data needed by caller to assemble a ban record\n");
 		printf("list_bans: List all bans currently in effect\n");
 		printf("fetch_logs: Pop elements from records map and build records from expired entries in banned_ips table. Output everything for logging purposes.\n");
@@ -303,7 +304,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 
 	if (!strcmp(argv[1], "ban")) {
 		if (argc != 6) {
-			fprintf(stderr, "Usage: %s ban <port> <ip> <duration> <reason>\n", argv[0]);
+			fprintf(stderr, "Usage: %s ban <port> <ip> <duration_seconds> <reason>\n", argv[0]);
 			exit(1);
 		}
 		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
@@ -328,6 +329,10 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				fprintf(stderr, "Found unrecognized character: %c", *endptr);
 			exit(1);
 		}
+		if (entry.duration > UINT64_MAX / NANOSECONDS_PER_SECOND)
+			entry.duration = UINT64_MAX;
+		else
+			entry.duration *= NANOSECONDS_PER_SECOND;
 		strncpy(entry.desc, argv[5], DESC_SIZE-1);
 		entry.desc[DESC_SIZE-1] = '\0';
 		struct timespec ts;
@@ -335,7 +340,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			perror("clock_gettime(CLOCK_TAI)");
 			exit(1);
 		}
-		entry.timestamp = (u64)ts.tv_nsec + (1000000000UL * (u64)ts.tv_sec);
+		entry.timestamp = (u64)ts.tv_nsec + (NANOSECONDS_PER_SECOND * (u64)ts.tv_sec);
 
 		union bpf_attr attr;
 		memset(&attr, 0, sizeof(union bpf_attr));
@@ -525,10 +530,10 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				exit(1);
 			}
 			/* Convert to seconds and Unix time */
-			rec.ban_duration /= 1000000000ULL;
+			rec.ban_duration /= NANOSECONDS_PER_SECOND;
 			int tai = get_tai_offset();
-			rec.ban_timestamp = (rec.ban_timestamp / 1000000000UL) - tai;
-			rec.autounban_timestamp = (rec.autounban_timestamp / 1000000000UL) - tai;
+			rec.ban_timestamp = (rec.ban_timestamp / NANOSECONDS_PER_SECOND) - tai;
+			rec.autounban_timestamp = (rec.autounban_timestamp / NANOSECONDS_PER_SECOND) - tai;
 			char *ban_timestamp_str = ctime((long*)&rec.ban_timestamp);
 			if (!ban_timestamp_str) {
 				perror("ctime");
