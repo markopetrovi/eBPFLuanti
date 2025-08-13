@@ -394,7 +394,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			int *res = find_expired_bans(values, attr.batch.count);
 			int res_count = 0;
 			for (int i = 0; i < attr.batch.count; i++) {
-				if (i = res[res_count]) {
+				if (i == res[res_count]) {
 					res_count++;
 					continue;
 				}
