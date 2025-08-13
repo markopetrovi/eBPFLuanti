@@ -181,7 +181,7 @@ static char *prepare_entry_for_printing(struct ban_entry *entry)
 }
 
 /* Simple escape for command-line strings (only " and \) */
-char* simple_json_escape(const char* str)
+char* simple_json_escape(char* str)
 {
 	size_t extra_chars = 0, orig_len = 0;
 	for (const char* p = str; *p; p++) {
