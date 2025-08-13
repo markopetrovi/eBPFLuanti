@@ -190,6 +190,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		printf("ban <port> <ip> <duration> <reason>: IP-ban this user on all ports. The <port> argument just shows where they were last spotted.\n");
 		printf("unban <ip>: Unban this IP and print the data needed by caller to assemble a ban record\n");
 		printf("list_bans: List all bans currently in effect\n");
+		printf("fetch_logs: Pop elements from records map and build records from expired entries in banned_ips table. Output everything for logging purposes.\n");
 		exit(0);
 	}
 	const char *map_dir = getconfig("MAP_DIR", "/sys/fs/bpf/xdp/globals");
@@ -411,6 +412,97 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
 		} while (saved_errno != ENOENT);
 		exit(0);
+	}
+
+	if (!strcmp(argv[1], "fetch_logs")) {
+		if (argc != 2) {
+			fprintf(stderr, "Usage: %s fetch_logs\n", argv[0]);
+			exit(1);
+		}
+		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP | RECORDS_MAP);
+		union bpf_attr attr;
+		memset(&attr, 0, sizeof(union bpf_attr));
+		u32 keys[10];	/* IPs in host byte order */
+		struct ban_entry values[10];
+		u32 batch_params[2] = {0, 0};
+		attr.batch.map_fd = fds.banfd;
+		attr.batch.in_batch = (u64) &batch_params[0];
+		attr.batch.out_batch = (u64) &batch_params[1];
+		attr.batch.keys = (u64) keys;
+		attr.batch.values = (u64) values;
+
+		time_t now = time(NULL);
+		char buf[26];
+		char *now_str = ctime_r(&now, buf);
+		if (!now_str) {
+			perror("ctime_r");
+			exit(1);
+		}
+
+		int saved_errno = 0;
+		do {
+			attr.batch.count = 10;
+			/* ENOENT means we just didn't have enough entries to fill a batch of 10 */
+			if (syscall(SYS_bpf, BPF_MAP_LOOKUP_BATCH, &attr, sizeof(union bpf_attr)) && errno != ENOENT) {
+				perror("bpf(BPF_MAP_LOOKUP_BATCH banned_ips)");
+				exit(1);
+			}
+			saved_errno = errno;
+			int *res = find_expired_bans(values, attr.batch.count);
+			for (int i = 0; res[i] != -1; i++) {
+				/* values[res[i]] are expired entries that we iterate over */
+				struct in_addr addr;
+				addr.s_addr = htonl(keys[i]);
+				char *ip_str = inet_ntoa(addr);
+				char *timestamp_str = prepare_entry_for_printing(&values[i]);
+				printf("{\n\tban_timestamp: %s\n", timestamp_str);
+				printf("\tunban_timestamp: %s\n", now_str);
+				printf("\tban_duration: %lu\n", values[i].duration);
+				printf("\tip: %s\n", ip_str);
+				printf("\tbanned_on_last_port: %u\n", values[i].banned_on_last_port);
+				printf("\tdescription: %s\n}\n", values[i].desc);
+			}
+			free(res);
+			* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
+		} while (saved_errno != ENOENT);
+
+		/* Now handle the records queue */
+		memset(&attr, 0, sizeof(union bpf_attr));
+		struct ban_record rec;
+		attr.map_fd = fds.recordfd;
+		attr.value = (u64) &rec;
+		while (1) {
+			if (syscall(SYS_bpf, BPF_MAP_LOOKUP_AND_DELETE_ELEM, &attr, sizeof(union bpf_attr))) {
+				if (errno == ENOENT)
+					break;
+				perror("BPF_MAP_LOOKUP_AND_DELETE_ELEM records");
+				exit(1);
+			}
+			/* Convert to seconds and Unix time */
+			rec.ban_duration /= 1000000000ULL;
+			int tai = get_tai_offset();
+			rec.ban_timestamp = (rec.ban_timestamp / 1000000000UL) - tai;
+			rec.autounban_timestamp = (rec.autounban_timestamp / 1000000000UL) - tai;
+			char *ban_timestamp_str = ctime((long*)&rec.ban_timestamp);
+			if (!ban_timestamp_str) {
+				perror("ctime");
+				exit(1);
+			}
+			char *unban_timestamp_str = ctime_r((long*)&rec.autounban_timestamp, buf);
+			if (!unban_timestamp_str) {
+				perror("ctime_r");
+				exit(1);
+			}
+			struct in_addr addr;
+			addr.s_addr = htonl(rec.ip);
+			char *ip_str = inet_ntoa(addr);
+			printf("{\n\tban_timestamp: %s\n", ban_timestamp_str);
+			printf("\tunban_timestamp: %s\n", unban_timestamp_str);
+			printf("\tban_duration: %lu\n", rec.ban_duration);
+			printf("\tip: %s\n", ip_str);
+			printf("\tbanned_on_last_port: %u\n", rec.banned_on_last_port);
+			printf("\tdescription: %s\n}\n", rec.desc);
+		}
 	}
 
 	fprintf(stderr, "Unknown command \"%s\"\n", argv[1]);
