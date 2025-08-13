@@ -180,6 +180,34 @@ static char *prepare_entry_for_printing(struct ban_entry *entry)
 	return timestamp_str;
 }
 
+/* Simple escape for command-line strings (only " and \) */
+char* simple_json_escape(const char* str)
+{
+	size_t extra_chars = 0, orig_len = 0;
+	for (const char* p = str; *p; p++) {
+		if (*p == '"' || *p == '\\')
+			extra_chars++;
+		orig_len++;
+	}
+
+	if (extra_chars == 0)
+		return str;
+
+	char* escaped = malloc(orig_len + extra_chars + 1);
+	if (!escaped) exit(ENOMEM);
+
+	char* dst = escaped;
+	for (const char* src = str; *src; src++) {
+		if (*src == '"' || *src == '\\') {
+			*dst++ = '\\';
+		}
+		*dst++ = *src;
+	}
+	*dst = '\0';
+
+	return escaped;
+}
+
 static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 {
 	if (!strcmp(argv[1], "--help")) {
@@ -475,7 +503,10 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				printf("\t\t\"ban_duration\": %lu,\n", values[i].duration);
 				printf("\t\t\"ip\": \"%s\",\n", ip_str);
 				printf("\t\t\"banned_on_last_port\": %u,\n", values[i].banned_on_last_port);
-				printf("\t\t\"description\": \"%s\"\n\t}", values[i].desc);
+				char *escaped_desc = simple_json_escape(values[i].desc);
+				printf("\t\t\"description\": \"%s\"\n\t}", escaped_desc);
+				if (escaped_desc != values[i].desc)
+					free(escaped_desc);
 			}
 			free(res);
 			* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
@@ -523,7 +554,10 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			printf("\t\t\"ban_duration\": %lu,\n", rec.ban_duration);
 			printf("\t\t\"ip\": \"%s\",\n", ip_str);
 			printf("\t\t\"banned_on_last_port\": %u,\n", rec.banned_on_last_port);
-			printf("\t\t\"description\": \"%s\"\n\t}", rec.desc);
+			char *escaped_desc = simple_json_escape(rec.desc);
+			printf("\t\t\"description\": \"%s\"\n\t}", escaped_desc);
+			if (escaped_desc != rec.desc)
+				free(escaped_desc);
 		}
 		printf("\n]\n");
 		exit(0);
