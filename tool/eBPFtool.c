@@ -456,14 +456,19 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		}
 		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP | RECORDS_MAP);
 		union bpf_attr attr;
+		union bpf_attr delete_attr;
 		memset(&attr, 0, sizeof(union bpf_attr));
+		memset(&delete_attr, 0, sizeof(union bpf_attr));
 		u32 keys[10];	/* IPs in host byte order */
+		u32 keys_to_delete[10];
 		struct ban_entry values[10];
 		u32 batch_params[2] = {0, 0};
+		delete_attr.batch.map_fd = fds.banfd;
 		attr.batch.map_fd = fds.banfd;
 		attr.batch.in_batch = (u64) &batch_params[0];
 		attr.batch.out_batch = (u64) &batch_params[1];
 		attr.batch.keys = (u64) keys;
+		delete_attr.batch.keys = (u64) keys_to_delete;
 		attr.batch.values = (u64) values;
 
 		time_t now = time(NULL);
@@ -489,8 +494,13 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			}
 			saved_errno = errno;
 			int *res = find_expired_bans(values, attr.batch.count);
+			delete_attr.batch.count = 0;
 			for (int i = 0; res[i] != -1; i++) {
 				/* values[res[i]] are expired entries that we iterate over */
+				/* keys[res[i]] are corresponding IPs */
+				delete_attr.batch.count++;
+				keys_to_delete[i] = keys[res[i]];
+
 				struct in_addr addr;
 				addr.s_addr = htonl(keys[i]);
 				char *ip_str = inet_ntoa(addr);
@@ -514,6 +524,12 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 					free(escaped_desc);
 			}
 			free(res);
+
+			/* ENOENT might mean that the eBPF program deleted some entry in the meantime */
+			if (syscall(SYS_bpf, BPF_MAP_DELETE_BATCH, &delete_attr, sizeof(union bpf_attr)) && errno != ENOENT) {
+				perror("bpf(BPF_MAP_DELETE_BATCH banned_ips)");
+				exit(1);
+			}
 			* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
 		} while (saved_errno != ENOENT);
 
