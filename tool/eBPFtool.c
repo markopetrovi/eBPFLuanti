@@ -182,7 +182,7 @@ static char *prepare_entry_for_printing(struct ban_entry *entry)
 }
 
 /* Simple escape for command-line strings (only " and \) */
-char* simple_json_escape(char* str)
+static char* simple_json_escape(char* str)
 {
 	size_t extra_chars = 0, orig_len = 0;
 	for (const char* p = str; *p; p++) {
@@ -510,7 +510,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				else
 					printf("\n");
 				comma = true;
-				
+
 				/* Strings from ctime already contain \n that messes up formatting here */
 				timestamp_str[24] = '\0';
 				printf("\t{\n\t\t\"ban_timestamp\": \"%s\",\n", timestamp_str);
