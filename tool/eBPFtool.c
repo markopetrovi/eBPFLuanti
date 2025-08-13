@@ -355,7 +355,8 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		bool is_expired = (res[0] == 0);
 
 		char *timestamp_str = prepare_entry_for_printing(&entry);
-		printf("Timestamp: %s\n", timestamp_str);
+		/* Strings from ctime already contain \n */
+		printf("Timestamp: %s", timestamp_str);
 		printf("Duration: %lu\n", entry.duration);
 		printf("Description: %s\n", entry.desc);
 		if (is_expired)
@@ -404,7 +405,8 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				char *ip_str = inet_ntoa(addr);
 				printf("%s {\n", ip_str);
 				char *timestamp_str = prepare_entry_for_printing(&values[i]);
-				printf("\tTimestamp: %s\n", timestamp_str);
+				/* Strings from ctime already contain \n */
+				printf("\tTimestamp: %s", timestamp_str);
 				printf("\tDuration: %lu\n", values[i].duration);
 				printf("\tDescription: %s\n}\n", values[i].desc);
 			}
@@ -455,8 +457,9 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				addr.s_addr = htonl(keys[i]);
 				char *ip_str = inet_ntoa(addr);
 				char *timestamp_str = prepare_entry_for_printing(&values[i]);
-				printf("{\n\tban_timestamp: %s\n", timestamp_str);
-				printf("\tunban_timestamp: %s\n", now_str);
+				/* Strings from ctime already contain \n */
+				printf("{\n\tban_timestamp: %s", timestamp_str);
+				printf("\tunban_timestamp: %s", now_str);
 				printf("\tban_duration: %lu\n", values[i].duration);
 				printf("\tip: %s\n", ip_str);
 				printf("\tbanned_on_last_port: %u\n", values[i].banned_on_last_port);
@@ -496,12 +499,14 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			struct in_addr addr;
 			addr.s_addr = htonl(rec.ip);
 			char *ip_str = inet_ntoa(addr);
-			printf("{\n\tban_timestamp: %s\n", ban_timestamp_str);
-			printf("\tunban_timestamp: %s\n", unban_timestamp_str);
+			/* Strings from ctime already contain \n */
+			printf("{\n\tban_timestamp: %s", ban_timestamp_str);
+			printf("\tunban_timestamp: %s", unban_timestamp_str);
 			printf("\tban_duration: %lu\n", rec.ban_duration);
 			printf("\tip: %s\n", ip_str);
 			printf("\tbanned_on_last_port: %u\n", rec.banned_on_last_port);
 			printf("\tdescription: %s\n}\n", rec.desc);
+			exit(0);
 		}
 	}
 
