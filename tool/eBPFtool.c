@@ -167,6 +167,19 @@ static int* find_expired_bans(struct ban_entry *entries, int count)
 	return results;
 }
 
+static char *prepare_entry_for_printing(struct ban_entry *entry)
+{
+	/* Convert to seconds and Unix time */
+	entry->duration /= 1000000000ULL;
+	entry->timestamp = (entry->timestamp / 1000000000UL) - get_tai_offset();
+	char *timestamp_str = ctime((long*)&entry->timestamp);
+	if (!timestamp_str) {
+		perror("ctime");
+		exit(1);
+	}
+	return timestamp_str;
+}
+
 static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 {
 	if (!strcmp(argv[1], "--help")) {
@@ -182,6 +195,10 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 	const char *map_dir = getconfig("MAP_DIR", "/sys/fs/bpf/xdp/globals");
 
 	if (!strcmp(argv[1], "dump_ports")) {
+		if (argc != 3) {
+			fprintf(stderr, "Usage: %s dump_ports\n", argv[0]);
+			exit(1);
+		}
 		struct map_fds fds = open_maps(map_dir, WATCHED_PORTS_MAP);
 		dump_ports(fds.portfd);
 		exit(0);
@@ -334,16 +351,9 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		}
 
 		int *res = find_expired_bans(&entry, 1);
-		bool is_expired = (res == 0);
+		bool is_expired = (res[0] == 0);
 
-		/* Convert to seconds and Unix time */
-		entry.duration /= 1000000000ULL;
-		entry.timestamp = (entry.timestamp / 1000000000UL) - get_tai_offset();
-		char *timestamp_str = ctime((long*)&entry.timestamp);
-		if (!timestamp_str) {
-			perror("ctime");
-			exit(1);
-		}
+		char *timestamp_str = prepare_entry_for_printing(&entry);
 		printf("Timestamp: %s\n", timestamp_str);
 		printf("Duration: %lu\n", entry.duration);
 		printf("Description: %s\n", entry.desc);
@@ -352,6 +362,54 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		else
 			printf("IP %s unbanned\n", argv[2]);
 
+		exit(0);
+	}
+
+	if (!strcmp(argv[1], "list_bans")) {
+		if (argc != 3) {
+			fprintf(stderr, "Usage: %s list_bans\n", argv[0]);
+			exit(1);
+		}
+		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
+		union bpf_attr attr;
+		memset(&attr, 0, sizeof(union bpf_attr));
+		u32 keys[10];	/* IPs in host byte order */
+		struct ban_entry values[10];
+		u32 batch_params[2] = {0, 0};
+		attr.batch.map_fd = fds.banfd;
+		attr.batch.in_batch = (u64) &batch_params[0];
+		attr.batch.out_batch = (u64) &batch_params[1];
+		attr.batch.keys = (u64) keys;
+		attr.batch.values = (u64) values;
+		printf("Currently banned IPs:\n");
+		int saved_errno = 0;
+		do {
+			attr.batch.count = 10;
+			/* ENOENT means we just didn't have enough entries to fill a batch of 10 */
+			if (syscall(SYS_bpf, BPF_MAP_LOOKUP_BATCH, &attr, sizeof(union bpf_attr)) && errno != ENOENT) {
+				perror("bpf(BPF_MAP_LOOKUP_BATCH banned_ips)");
+				exit(1);
+			}
+			saved_errno = errno;
+			int *res = find_expired_bans(values, attr.batch.count);
+			int res_count = 0;
+			for (int i = 0; i < attr.batch.count; i++) {
+				if (i = res[res_count]) {
+					res_count++;
+					continue;
+				}
+				struct in_addr addr;
+				addr.s_addr = htonl(keys[i]);
+				char *ip_str = inet_ntoa(addr);
+				printf("%s {\n", ip_str);
+				char *timestamp_str = prepare_entry_for_printing(&values[i]);
+				printf("\tTimestamp: %s\n", timestamp_str);
+				printf("\tDuration: %lu\n", values[i].duration);
+				printf("\tDescription: %s\n}\n", values[i].desc);
+			}
+			free(res);
+			* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
+		} while (saved_errno != ENOENT);
 		exit(0);
 	}
 
