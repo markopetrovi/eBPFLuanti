@@ -440,6 +440,8 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			perror("ctime_r");
 			exit(1);
 		}
+		/* Strings from ctime already contain \n that messes up formatting here */
+		now_str[24] = '\0';
 
 		printf("[");
 		int saved_errno = 0;
@@ -465,9 +467,11 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				else
 					printf("\n");
 				comma = true;
-				/* Strings from ctime already contain \n */
-				printf("\t{\n\t\tban_timestamp: \"%s\",", timestamp_str);
-				printf("\t\tunban_timestamp: \"%s\",", now_str);
+				
+				/* Strings from ctime already contain \n that messes up formatting here */
+				timestamp_str[24] = '\0';
+				printf("\t{\n\t\tban_timestamp: \"%s\",\n", timestamp_str);
+				printf("\t\tunban_timestamp: \"%s\",\n", now_str);
 				printf("\t\tban_duration: %lu,\n", values[i].duration);
 				printf("\t\tip: \"%s\",\n", ip_str);
 				printf("\t\tbanned_on_last_port: %u,\n", values[i].banned_on_last_port);
@@ -512,9 +516,10 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			else
 				printf("\n");
 			comma = true;
-			/* Strings from ctime already contain \n */
-			printf("\t{\n\t\tban_timestamp: \"%s\",", ban_timestamp_str);
-			printf("\t\tunban_timestamp: \"%s\",", unban_timestamp_str);
+			/* Strings from ctime already contain \n that messes up formatting here */
+			ban_timestamp_str[24] = unban_timestamp_str[24] = '\0';
+			printf("\t{\n\t\tban_timestamp: \"%s\",\n", ban_timestamp_str);
+			printf("\t\tunban_timestamp: \"%s\",\n", unban_timestamp_str);
 			printf("\t\tban_duration: %lu,\n", rec.ban_duration);
 			printf("\t\tip: \"%s\",\n", ip_str);
 			printf("\t\tbanned_on_last_port: %u,\n", rec.banned_on_last_port);
