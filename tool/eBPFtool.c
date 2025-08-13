@@ -470,12 +470,12 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				
 				/* Strings from ctime already contain \n that messes up formatting here */
 				timestamp_str[24] = '\0';
-				printf("\t{\n\t\tban_timestamp: \"%s\",\n", timestamp_str);
-				printf("\t\tunban_timestamp: \"%s\",\n", now_str);
-				printf("\t\tban_duration: %lu,\n", values[i].duration);
-				printf("\t\tip: \"%s\",\n", ip_str);
-				printf("\t\tbanned_on_last_port: %u,\n", values[i].banned_on_last_port);
-				printf("\t\tdescription: \"%s\"\n\t}", values[i].desc);
+				printf("\t{\n\t\t\"ban_timestamp\": \"%s\",\n", timestamp_str);
+				printf("\t\t\"unban_timestamp\": \"%s\",\n", now_str);
+				printf("\t\t\"ban_duration\": %lu,\n", values[i].duration);
+				printf("\t\t\"ip\": \"%s\",\n", ip_str);
+				printf("\t\t\"banned_on_last_port\": %u,\n", values[i].banned_on_last_port);
+				printf("\t\t\"description\": \"%s\"\n\t}", values[i].desc);
 			}
 			free(res);
 			* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
@@ -518,12 +518,12 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			comma = true;
 			/* Strings from ctime already contain \n that messes up formatting here */
 			ban_timestamp_str[24] = unban_timestamp_str[24] = '\0';
-			printf("\t{\n\t\tban_timestamp: \"%s\",\n", ban_timestamp_str);
-			printf("\t\tunban_timestamp: \"%s\",\n", unban_timestamp_str);
-			printf("\t\tban_duration: %lu,\n", rec.ban_duration);
-			printf("\t\tip: \"%s\",\n", ip_str);
-			printf("\t\tbanned_on_last_port: %u,\n", rec.banned_on_last_port);
-			printf("\t\tdescription: \"%s\"\n\t}", rec.desc);
+			printf("\t{\n\t\t\"ban_timestamp\": \"%s\",\n", ban_timestamp_str);
+			printf("\t\t\"unban_timestamp\": \"%s\",\n", unban_timestamp_str);
+			printf("\t\t\"ban_duration\": %lu,\n", rec.ban_duration);
+			printf("\t\t\"ip\": \"%s\",\n", ip_str);
+			printf("\t\t\"banned_on_last_port\": %u,\n", rec.banned_on_last_port);
+			printf("\t\t\"description\": \"%s\"\n\t}", rec.desc);
 		}
 		printf("\n]\n");
 		exit(0);
