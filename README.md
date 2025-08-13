@@ -1,89 +1,91 @@
+---
+
 # Luanti eBPF Network Filters
 
-This repository contains high-performance eBPF/XDP programs designed to protect **Luanti** (formerly Minetest) servers from packet-based abuse, such as UDP spam and flooding.
+This repository contains high-performance eBPF/XDP programs and a companion management tool designed to protect **Luanti** (formerly Minetest) servers from packet-based abuse, such as UDP spam and flooding.
 
-eBPF (extended Berkeley Packet Filter) is a framework that allows loading privileged programs into the Linux kernel, but unlike regular kernel modules, eBPF programs are compiled into a special bytecode instruction set that enables the Linux kernel to verify that the program halts, accesses valid memory, etc., before it runs it in an interpreter or JIT-compiles it into native code for performance. Verifier, interpreter and JIT-compiler are all parts of the upstream Linux kernel.
+eBPF (extended Berkeley Packet Filter) is a Linux kernel technology that allows loading verified, sandboxed programs directly into the kernel for safe, high-performance packet filtering. These programs can be JIT-compiled to native code for minimal latency while maintaining kernel stability.
 
-## Included Filters
+---
 
-- **block_udp**: Filters and bans IPs that send too many UDP "init" packets matching the Luanti protocol format.
+## Included Programs
 
-More eBPF programs targeting other types of Minetest-related abuse may be added in the future.
+* **`xdp_filter`** – Filters and bans IPs that send too many UDP “init” packets matching the Luanti protocol format.
+* **`eBPFtool`** – A standalone command-line utility (no `bpftool` or libbpf needed) for managing watched ports, bans, and logs.
 
 ---
 
 ## Features
 
-- ⚡ **High-performance**: Runs at the XDP layer for minimal latency and maximum throughput.
-- 🚫 **Dynamic IP banning**: Automatically blocks abusive IPs.
-- 🔁 **Auto-reset tracking**: Resets per-IP counters after a period of inactivity.
-- 🎯 **Port filtering**: Only inspects packets to explicitly watched ports.
+* ⚡ **High-performance**: Runs at the XDP layer for minimal latency and maximum throughput.
+* 🚫 **Dynamic IP banning**: Automatically blocks abusive IPs.
+* 🔁 **Auto-reset tracking**: Resets per-IP counters after a period of inactivity.
+* 🎯 **Port filtering**: Only inspects packets sent to explicitly watched ports.
+* 🛠 **Self-contained management tool**: Uses raw `SYS_bpf` syscalls—no extra libraries required.
+* 📜 **Detailed ban records**: Timestamps, duration, last seen port, and reason.
+* 📂 **Structured logs**: `fetch_logs` outputs a JSON array of `ban_record` entries for easy parsing.
 
 ---
 
-## block_udp: Overview
+## Program Logic (xdp\_filter)
 
-This eBPF program detects and rate-limits UDP init packets with the following conditions:
+The program detects and rate-limits UDP init packets:
 
-- **Protocol ID**: `0x4f457403`
-- **Peer ID**: `0x0000` (inexistent)
-- **Threshold**: More than 100 packets within 10 seconds from the same IP ➝ IP is banned
+* **Protocol ID**: `0x4f457403`
+* **Peer ID**: `0x0000` (inexistent)
+* **Threshold**: More than 100 packets in 10 seconds from the same IP ➝ ban
 
 ### Data Structures (Maps)
 
-| Map Name       | Type         | Key              | Value            | Purpose                           |
-|----------------|--------------|------------------|------------------|-----------------------------------|
-| `packet_count` | LRU Hash     | `u32` IP         | `struct ip_entry`| Tracks packet count + time per IP |
-| `banned_ips`   | Hash         | `u32` IP         | `u8`             | Stores banned IPs                 |
-| `watched_ports`| Hash         | `u16` port (BE)  | `u8`             | Ports to inspect for filtering    |
+| Map Name        | Type     | Key             | Value               | Purpose                         |
+| --------------- | -------- | --------------- | ------------------- | ------------------------------- |
+| `packet_count`  | LRU Hash | `u32` IP        | `struct ip_entry`   | Tracks packet count + timestamp |
+| `records`       | Queue    | —               | `struct ban_record` | Ban event log queue             |
+| `banned_ips`    | Hash     | `u32` IP        | `struct ban_entry`  | Stores current bans             |
+| `watched_ports` | Hash     | `u16` port      | `u8`                | Ports to inspect for filtering  |
 
 ---
 
-## Build and Load Instructions
+## Build and Usage
 
-### 1. Compile the Filter
-
-```sh
-clang -O3 -g -mcpu=v3 -target bpf -c block_udp.c -o block_udp.o
-```
-
-### 2. Load the Filter
-
-Replace `enp0s6` with your network interface:
+### 1. Build
 
 ```sh
-ip link set dev enp0s6 xdp obj block_udp.o sec xdp
+make vmlinux   # Generates vmlinux.h for the eBPF program
+make           # Compiles the management tool and the eBPF program
 ```
 
-### 3. Configure Watched Ports
+### 2. Load / Unload the Filter
 
-Use `bpftool` to determine the map ID:
+> Loading/unloading is still done with the `ip` command.
 
 ```sh
-bpftool map
+sudo ip link set dev enp0s6 xdp obj xdp_filter.o sec xdp
+sudo ip link set dev enp0s6 xdp off
 ```
 
-Then update the watched port map. Example for port `30001` (hex `0x7531`):
+### 3. Manage with eBPFtool
 
 ```sh
-bpftool map update id <MapID> key 0x75 0x31 value 0x01
+./eBPFtool --help
 ```
 
-### 4. Unload the Program
+**Main commands:**
 
-```sh
-ip link set dev enp0s6 xdp off
-```
-
-> ⚠️ A user-friendly script to automate these steps will be added soon.
+* `dump_ports` – List watched ports
+* `add_port <port>` / `rm_port <port>` – Add/remove watched ports
+* `ban <port> <ip> <duration> <reason>` – Manually ban an IP
+* `unban <ip>` – Unban an IP
+* `list_bans` – Show current bans
+* `fetch_logs` – Output a JSON array of `ban_record` entries from expired bans and the log queue
 
 ---
 
 ## Requirements
 
-- Linux with eBPF/XDP support
-- `clang`, `llvm`, `bpftool`
-- Root privileges to load eBPF programs
+* Linux kernel with eBPF/XDP support (relatively recent version recommended)
+* `clang`, `llvm`, `make`
+* Root privileges to load eBPF programs
 
 ---
 
@@ -92,7 +94,3 @@ ip link set dev enp0s6 xdp off
 MIT License
 
 ---
-
-## Contributing
-
-Contributions for additional Minetest/Luanti-related eBPF filters are welcome
