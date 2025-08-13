@@ -216,7 +216,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		printf("dump_ports: Write all currently watched ports\n");
 		printf("add_port <port>: Add port to the watchlist\n");
 		printf("rm_port <port>: Remove port from the watchlist\n");
-		printf("ban <port> <ip> <duration_seconds> <reason>: IP-ban this user on all ports. The <port> argument just shows where they were last spotted.\n");
+		printf("ban <port (if you're in shell)> <ip> <duration_seconds> <reason>: IP-ban this user on all ports. The <port> argument just shows where they were last spotted.\n");
 		printf("unban <ip>: Unban this IP and print the data needed by caller to assemble a ban record\n");
 		printf("list_bans: List all bans currently in effect\n");
 		printf("fetch_logs: Pop elements from records map and build records from expired entries in banned_ips table. Output everything for logging purposes.\n");
@@ -304,7 +304,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 
 	if (!strcmp(argv[1], "ban")) {
 		if (argc != 6) {
-			fprintf(stderr, "Usage: %s ban <port> <ip> <duration_seconds> <reason>\n", argv[0]);
+			fprintf(stderr, "Usage: %s ban <port (if you're in shell)> <ip> <duration_seconds> <reason>\n", argv[0]);
 			exit(1);
 		}
 		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
