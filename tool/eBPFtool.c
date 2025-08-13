@@ -441,7 +441,10 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			exit(1);
 		}
 
+		printf("[");
 		int saved_errno = 0;
+		/* In JSON, add , after each } but not after the last one, and obviously not before the first entry */
+		bool comma = false;
 		do {
 			attr.batch.count = 10;
 			/* ENOENT means we just didn't have enough entries to fill a batch of 10 */
@@ -457,13 +460,18 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				addr.s_addr = htonl(keys[i]);
 				char *ip_str = inet_ntoa(addr);
 				char *timestamp_str = prepare_entry_for_printing(&values[i]);
+				if (comma)
+					printf(",\n");
+				else
+					printf("\n");
+				comma = true;
 				/* Strings from ctime already contain \n */
-				printf("{\n\tban_timestamp: %s", timestamp_str);
-				printf("\tunban_timestamp: %s", now_str);
-				printf("\tban_duration: %lu\n", values[i].duration);
-				printf("\tip: %s\n", ip_str);
-				printf("\tbanned_on_last_port: %u\n", values[i].banned_on_last_port);
-				printf("\tdescription: %s\n}\n", values[i].desc);
+				printf("\t{\n\t\tban_timestamp: \"%s\",", timestamp_str);
+				printf("\t\tunban_timestamp: \"%s\",", now_str);
+				printf("\t\tban_duration: %lu,\n", values[i].duration);
+				printf("\t\tip: \"%s\",\n", ip_str);
+				printf("\t\tbanned_on_last_port: %u,\n", values[i].banned_on_last_port);
+				printf("\t\tdescription: \"%s\"\n\t}", values[i].desc);
 			}
 			free(res);
 			* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
@@ -499,15 +507,21 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			struct in_addr addr;
 			addr.s_addr = htonl(rec.ip);
 			char *ip_str = inet_ntoa(addr);
+			if (comma)
+				printf(",\n");
+			else
+				printf("\n");
+			comma = true;
 			/* Strings from ctime already contain \n */
-			printf("{\n\tban_timestamp: %s", ban_timestamp_str);
-			printf("\tunban_timestamp: %s", unban_timestamp_str);
-			printf("\tban_duration: %lu\n", rec.ban_duration);
-			printf("\tip: %s\n", ip_str);
-			printf("\tbanned_on_last_port: %u\n", rec.banned_on_last_port);
-			printf("\tdescription: %s\n}\n", rec.desc);
-			exit(0);
+			printf("\t{\n\t\tban_timestamp: \"%s\",", ban_timestamp_str);
+			printf("\t\tunban_timestamp: \"%s\",", unban_timestamp_str);
+			printf("\t\tban_duration: %lu,\n", rec.ban_duration);
+			printf("\t\tip: \"%s\",\n", ip_str);
+			printf("\t\tbanned_on_last_port: %u,\n", rec.banned_on_last_port);
+			printf("\t\tdescription: \"%s\"\n\t}", rec.desc);
 		}
+		printf("\n]\n");
+		exit(0);
 	}
 
 	fprintf(stderr, "Unknown command \"%s\"\n", argv[1]);
