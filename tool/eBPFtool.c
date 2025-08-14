@@ -442,6 +442,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				/* Strings from ctime already contain \n */
 				printf("\tTimestamp: %s", timestamp_str);
 				printf("\tDuration: %lu\n", values[i].duration);
+				printf("\tLast seen on port: %u\n", values[i].banned_on_last_port);
 				printf("\tDescription: %s\n}\n", values[i].desc);
 			}
 			free(res);
