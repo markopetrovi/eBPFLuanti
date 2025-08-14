@@ -219,7 +219,8 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		printf("ban <port (if you're in shell)> <ip> <duration_seconds> <reason>: IP-ban this user on all ports. The <port> argument just shows where they were last spotted.\n");
 		printf("unban <ip>: Unban this IP and print the data needed by caller to assemble a ban record\n");
 		printf("list_bans: List all bans currently in effect\n");
-		printf("fetch_logs: Pop elements from records map and build records from expired entries in banned_ips table. Output everything for logging purposes.\n");
+		printf("is_banned <ip>: Check if the given IP is banned.\n");
+		printf("fetch_logs: Pop elements from the records map and build records from expired entries in the banned_ips table. Output everything for logging purposes. Should only be called by the logging code, call manually only if you know what you're doing.\n");
 		exit(0);
 	}
 	const char *map_dir = getconfig("MAP_DIR", "/sys/fs/bpf/xdp/globals");
@@ -366,7 +367,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
 		struct in_addr addr;
 		if (inet_pton(AF_INET, argv[2], &addr) != 1) {
-			fprintf(stderr, "Invalid IPv4 address %s\n", argv[3]);
+			fprintf(stderr, "Invalid IPv4 address %s\n", argv[2]);
 			exit(1);
 		}
 		u32 key = ntohl(addr.s_addr);
@@ -581,6 +582,46 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				free(escaped_desc);
 		}
 		printf("\n]\n");
+		exit(0);
+	}
+
+	if (!strcmp(argv[1], "is_banned")) {
+		if (argc != 3) {
+			fprintf(stderr, "Usage: %s is_banned <ip>\n", argv[0]);
+			exit(1);
+		}
+		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
+		struct in_addr addr;
+		if (inet_pton(AF_INET, argv[2], &addr) != 1) {
+			fprintf(stderr, "Invalid IPv4 address %s\n", argv[2]);
+			exit(1);
+		}
+		u32 key = ntohl(addr.s_addr);
+
+		union bpf_attr attr;
+		struct ban_entry entry;
+		memset(&attr, 0, sizeof(union bpf_attr));
+		attr.map_fd = fds.banfd;
+		attr.key = (u64) &key;
+		attr.value = (u64) &entry;
+		if (syscall(SYS_bpf, BPF_MAP_LOOKUP_ELEM, &attr, sizeof(union bpf_attr))) {
+			if (errno == ENOENT) {
+				printf("IP %s not banned\n", argv[2]);
+				exit(0);
+			}
+			else {
+				perror("BPF_MAP_LOOKUP_ELEM banned_ips");
+				exit(1);
+			}
+		}
+		char *timestamp_str = prepare_entry_for_printing(&entry);
+		/* Strings from ctime already contain \n */
+		printf("Found ban entry:\n");
+		printf("\tIP: %s\n", argv[2]);
+		printf("\tTimestamp: %s", timestamp_str);
+		printf("\tDuration: %lu\n", entry.duration);
+		printf("\tLast seen on port: %u\n", entry.banned_on_last_port);
+		printf("\tDescription: %s\n", entry.desc);
 		exit(0);
 	}
 
