@@ -614,6 +614,11 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				exit(1);
 			}
 		}
+		int *res = find_expired_bans(&entry, 1);
+		if (res[0] == 0) {
+			printf("IP %s not banned\n", argv[2]);
+			exit(0);
+		}
 		char *timestamp_str = prepare_entry_for_printing(&entry);
 		/* Strings from ctime already contain \n */
 		printf("Found ban entry:\n");
