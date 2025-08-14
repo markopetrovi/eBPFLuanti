@@ -11,7 +11,7 @@ eBPF (extended Berkeley Packet Filter) is a Linux kernel technology that allows 
 ## Included Programs
 
 * **`xdp_filter`** – Filters and bans IPs that send too many UDP “init” packets matching the Luanti protocol format.
-* **`eBPFtool`** – A standalone command-line utility (no `bpftool` or libbpf needed) for managing watched ports, bans, and logs.
+* **`eBPFtool`** – A standalone command-line utility (no libbpf needed) for managing watched ports, bans, and logs.
 
 ---
 
@@ -77,6 +77,7 @@ sudo ip link set dev enp0s6 xdp off
 * `ban <port> <ip> <duration> <reason>` – Manually ban an IP
 * `unban <ip>` – Unban an IP
 * `list_bans` – Show current bans
+* `is_banned <ip>` - Check if an IP is currently banned
 * `fetch_logs` – Output a JSON array of `ban_record` entries from expired bans and the log queue
 
 ---
@@ -84,7 +85,7 @@ sudo ip link set dev enp0s6 xdp off
 ## Requirements
 
 * Linux kernel with eBPF/XDP support (relatively recent version recommended)
-* `clang`, `llvm`, `make`
+* `clang`, `gcc`, `make`, `bpftool`
 * Root privileges to load eBPF programs
 
 ---
