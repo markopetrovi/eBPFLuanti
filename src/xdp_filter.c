@@ -11,11 +11,13 @@
 struct ip_entry {
 	u64 count;
 	u64 time;
+	u64 first_seen;
 };
 
 #define DESC_SIZE 255
 
 struct ban_entry {
+	u64 spam_start_timestamp;
 	u64 timestamp;
 	u64 duration;
 	u16 banned_on_last_port;
@@ -23,6 +25,7 @@ struct ban_entry {
 };
 
 struct ban_record {
+	u64 spam_start_timestamp;
 	u64 ban_timestamp;
 	u64 autounban_timestamp;
 	u64 ban_duration;
@@ -110,7 +113,8 @@ int __noinline handle_init_packet(u32 proto_raw, u16 peer_raw, u32 src_ip, u16 s
 				struct ban_entry val = {
 					.timestamp = now,
 					.duration = 3600000000000ULL,   /* 1 hour */
-					.banned_on_last_port = src_port
+					.banned_on_last_port = src_port,
+					.spam_start_timestamp = entry->first_seen
 				};
 				safe_strcpy(val.desc, "Init packet spam, autoban", DESC_SIZE);
 				bpf_map_update_elem(&banned_ips, &src_ip, &val, BPF_ANY);
@@ -126,7 +130,8 @@ new_entry:
 		(void)1;
 		struct ip_entry ent = {
 			.count = 1,
-			.time = now
+			.time = now,
+			.first_seen = now
 		};
 		bpf_map_update_elem(&packet_count, &src_ip, &ent, BPF_ANY);
 	}
@@ -147,7 +152,8 @@ int __noinline handle_bans(u32 src_ip)
 				.autounban_timestamp = now,
 				.ban_duration = entry->duration,
 				.banned_on_last_port = entry->banned_on_last_port,
-				.ip = src_ip
+				.ip = src_ip,
+				.spam_start_timestamp = entry->spam_start_timestamp
 			};
 			safe_strcpy(rec.desc, entry->desc, DESC_SIZE);
 			bpf_map_delete_elem(&banned_ips, &src_ip);
