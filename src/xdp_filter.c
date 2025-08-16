@@ -91,6 +91,29 @@ int __noinline update_time(u64 now, u64 __arg_nonnull *time)
 	return 0;
 }
 
+u64 last_called = 0;
+#define CREATE_REMINDER_ENTRY 5000000000UL	/* 5 seconds */
+int handle_unconfigured_filter()
+{
+	u64 now = bpf_ktime_get_tai_ns();
+	u64 old_time = __sync_fetch_and_add(&last_called, 0);
+	if (now > old_time && now - old_time > CREATE_REMINDER_ENTRY) {
+		struct ban_record rec = {
+			.ban_timestamp = now,
+			.autounban_timestamp = now,
+			.ban_duration = 0,
+			.banned_on_last_port = 0,
+			.ip = 0,
+			.spam_start_timestamp = now
+		};
+		#define UNCONFIGURED_MSG "[WARNING]: This is not a ban. \"init_handler_config\" map isn't properly set up. This is a notification that the init packet filter cannot work properly"
+		__builtin_memcpy(rec.desc, UNCONFIGURED_MSG, sizeof(UNCONFIGURED_MSG));
+		bpf_map_push_elem(&records, &rec, 0);
+		update_time(now, &last_called);
+	}
+	return 0;
+}
+
 struct init_handler_args {
 	int retval;
 	u32 proto_id;
@@ -106,6 +129,10 @@ static long handle_init_packet(struct bpf_map *map, const void *key, void *value
 	struct init_handler_args *args = ctx;
 	struct init_handler_config *config = value;
 
+	if (!config->block_threshold && !config->ip_count_reset_ns) {
+		handle_unconfigured_filter();
+		return CONTINUE_ITERATION;
+	}
 	if (args->proto_id == PROTOCOL_ID && args->peer_id == PEER_ID_INEXISTENT) {
 		struct ip_entry *entry = bpf_map_lookup_elem(&packet_count, &args->src_ip);
 		u64 now = bpf_ktime_get_tai_ns();
@@ -135,7 +162,6 @@ static long handle_init_packet(struct bpf_map *map, const void *key, void *value
 			}
 			/* Atomic CAS to update time */
 			update_time(now, &entry->time);
-			args->retval = XDP_PASS;
 			return CONTINUE_ITERATION;
 		}
 new_entry:
@@ -148,7 +174,6 @@ new_entry:
 		};
 		bpf_map_update_elem(&packet_count, &args->src_ip, &ent, BPF_ANY);
 	}
-	args->retval = XDP_PASS;
 	return CONTINUE_ITERATION;
 }
 
@@ -234,7 +259,8 @@ int luanti_filter(struct xdp_md *ctx)
 		.proto_id = bpf_ntohl(proto_raw),
 		.peer_id = bpf_ntohs(peer_raw),
 		.port = port,
-		.src_ip = src_ip
+		.src_ip = src_ip,
+		.retval = XDP_PASS
 	};
 	bpf_for_each_map_elem(&init_handler_config, handle_init_packet, &args, 0);
 	if (args.retval == XDP_DROP)
