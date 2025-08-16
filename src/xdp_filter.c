@@ -94,7 +94,7 @@ int __noinline update_time(u64 now, u64 __arg_nonnull *time)
 }
 
 u64 last_called = 0;
-#define CREATE_REMINDER_ENTRY 5000000000UL	/* 5 seconds */
+#define CREATE_REMINDER_ENTRY 15000000000UL	/* 15 seconds */
 int handle_unconfigured_filter()
 {
 	u64 now = bpf_ktime_get_tai_ns();
@@ -108,7 +108,7 @@ int handle_unconfigured_filter()
 			.ip = 0,
 			.spam_start_timestamp = now
 		};
-		#define UNCONFIGURED_MSG "[WARNING]: This is not a ban. \"init_handler_config\" map isn't properly set up. This is a notification that the init packet filter cannot work properly"
+		#define UNCONFIGURED_MSG "[WARNING]: This is not a ban. init_handler_config map isn't properly set up. This is a notification that the init packet filter cannot work properly"
 		__builtin_memcpy(rec.desc, UNCONFIGURED_MSG, sizeof(UNCONFIGURED_MSG));
 		bpf_map_push_elem(&records, &rec, 0);
 		update_time(now, &last_called);
