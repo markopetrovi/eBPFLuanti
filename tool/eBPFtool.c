@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2025 Marko Petrović <petrovicmarko2006@gmail.com>
 #define _GNU_SOURCE
 #include <linux/bpf.h>
 #include <sys/syscall.h>

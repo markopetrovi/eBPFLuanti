@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2025 Marko Petrović <petrovicmarko2006@gmail.com>
 #include "../include/vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
@@ -269,4 +271,4 @@ int luanti_filter(struct xdp_md *ctx)
 	return XDP_PASS;
 }
 
-char _license[] SEC("license") = "MIT";
+char _license[] SEC("license") = "GPL";
