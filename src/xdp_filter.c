@@ -154,7 +154,7 @@ static long handle_init_packet(struct bpf_map *map, const void *key, void *value
 					.spam_start_timestamp = entry->first_seen
 				};
 				u64 data[2] = {config->block_threshold, config->ip_count_reset_ns / NANOSECONDS_PER_SECOND};
-				bpf_snprintf(val.desc, DESC_SIZE, "Init packet spam, autoban. Accumulated %u packets in %u seconds.", data, sizeof(data));
+				bpf_snprintf(val.desc, DESC_SIZE, "Init packet spam, autoban. Sent %u packets without any %u seconds pause.", data, sizeof(data));
 				bpf_map_update_elem(&banned_ips, &args->src_ip, &val, BPF_ANY);
 				bpf_map_delete_elem(&packet_count, &args->src_ip);
 				args->retval = XDP_DROP;
