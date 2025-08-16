@@ -196,7 +196,7 @@ int __noinline handle_bans(u32 src_ip)
 				.ip = src_ip,
 				.spam_start_timestamp = entry->spam_start_timestamp
 			};
-			bpf_snprintf(rec.desc, DESC_SIZE, "%s", (u64*)entry->desc, 1);
+			__builtin_memcpy(rec.desc, entry->desc, DESC_SIZE);
 			bpf_map_delete_elem(&banned_ips, &src_ip);
 			bpf_map_push_elem(&records, &rec, BPF_EXIST);
 			return XDP_PASS;
