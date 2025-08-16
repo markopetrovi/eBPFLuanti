@@ -27,10 +27,10 @@ static const char *getconfig(const char *name, const char *default_val)
 #define BANNED_IPS_MAP		1
 #define RECORDS_MAP		2
 #define WATCHED_PORTS_MAP	4
-#define ALL_MAPS		(BANNED_IPS_MAP | RECORDS_MAP | WATCHED_PORTS_MAP)
+#define CONFIG_MAP		8
 
 struct map_fds {
-	int banfd, portfd, recordfd;
+	int banfd, portfd, recordfd, configfd;
 };
 
 union ipv4_addr {
@@ -43,6 +43,7 @@ union ipv4_addr {
 #define DESC_SIZE 255
 
 struct ban_entry {
+	u64 spam_start_timestamp;
 	u64 timestamp;
 	u64 duration;
 	u16 banned_on_last_port;
@@ -50,6 +51,7 @@ struct ban_entry {
 };
 
 struct ban_record {
+	u64 spam_start_timestamp;
 	u64 ban_timestamp;
 	u64 autounban_timestamp;
 	u64 ban_duration;
@@ -93,6 +95,14 @@ static struct map_fds open_maps(const char *map_dir, int map_ids)
 		fds.recordfd = syscall(SYS_bpf, BPF_OBJ_GET, &attr, sizeof(union bpf_attr));
 		if (fds.recordfd < 0) {
 			perror("BPF_OBJ_GET records");
+			exit(1);
+		}
+	}
+	if (map_ids & CONFIG_MAP) {
+		attr.pathname = (u64) "init_handler_config";
+		fds.configfd = syscall(SYS_bpf, BPF_OBJ_GET, &attr, sizeof(union bpf_attr));
+		if (fds.configfd < 0) {
+			perror("BPF_OBJ_GET init_handler_config");
 			exit(1);
 		}
 	}
@@ -144,6 +154,7 @@ static int get_tai_offset()
 		fprintf(stderr, "Warning: System clock isn't properly synchronized.\n");
 	return buf.tai;
 }
+static int tai_offset;
 
 /* Return a (-1)-terminated array of indexes for bans that should be removed */
 static int* find_expired_bans(struct ban_entry *entries, int count)
@@ -168,15 +179,26 @@ static int* find_expired_bans(struct ban_entry *entries, int count)
 	return results;
 }
 
-static char *prepare_entry_for_printing(struct ban_entry *entry)
+static char *prepare_entry_for_printing(struct ban_entry *entry, char *spam_start_timestamp)
 {
 	/* Convert to seconds and Unix time */
 	entry->duration /= NANOSECONDS_PER_SECOND;
-	entry->timestamp = (entry->timestamp / NANOSECONDS_PER_SECOND) - get_tai_offset();
+	entry->timestamp = (entry->timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
 	char *timestamp_str = ctime((long*)&entry->timestamp);
 	if (!timestamp_str) {
 		perror("ctime");
 		exit(1);
+	}
+	if (entry->spam_start_timestamp) {
+		entry->spam_start_timestamp = (entry->spam_start_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
+		spam_start_timestamp = ctime_r((long*)&entry->spam_start_timestamp, spam_start_timestamp);
+		if (!spam_start_timestamp) {
+			perror("ctime_r");
+			exit(1);
+		}
+	}
+	else {
+		spam_start_timestamp[0] = '\0';
 	}
 	return timestamp_str;
 }
@@ -342,6 +364,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			exit(1);
 		}
 		entry.timestamp = (u64)ts.tv_nsec + (NANOSECONDS_PER_SECOND * (u64)ts.tv_sec);
+		entry.spam_start_timestamp = 0;
 
 		union bpf_attr attr;
 		memset(&attr, 0, sizeof(union bpf_attr));
@@ -388,8 +411,11 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		int *res = find_expired_bans(&entry, 1);
 		bool is_expired = (res[0] == 0);
 
-		char *timestamp_str = prepare_entry_for_printing(&entry);
+		char buf[26];
+		char *timestamp_str = prepare_entry_for_printing(&entry, buf);
 		/* Strings from ctime already contain \n */
+		if (buf[0])
+			printf("Spam Start Timestamp: %s", buf);
 		printf("Timestamp: %s", timestamp_str);
 		printf("Duration: %lu\n", entry.duration);
 		printf("Description: %s\n", entry.desc);
@@ -438,8 +464,11 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				addr.s_addr = htonl(keys[i]);
 				char *ip_str = inet_ntoa(addr);
 				printf("%s {\n", ip_str);
-				char *timestamp_str = prepare_entry_for_printing(&values[i]);
+				char buf[26];
+				char *timestamp_str = prepare_entry_for_printing(&values[i], buf);
 				/* Strings from ctime already contain \n */
+				if (buf[0])
+					printf("\tSpam Start Timestamp: %s", buf);
 				printf("\tTimestamp: %s", timestamp_str);
 				printf("\tDuration: %lu\n", values[i].duration);
 				printf("\tLast seen on port: %u\n", values[i].banned_on_last_port);
@@ -506,7 +535,8 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 				struct in_addr addr;
 				addr.s_addr = htonl(keys[i]);
 				char *ip_str = inet_ntoa(addr);
-				char *timestamp_str = prepare_entry_for_printing(&values[i]);
+				char buf[26];
+				char *timestamp_str = prepare_entry_for_printing(&values[i], buf);
 				if (comma)
 					printf(",\n");
 				else
@@ -515,7 +545,10 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 
 				/* Strings from ctime already contain \n that messes up formatting here */
 				timestamp_str[24] = '\0';
+				buf[24] = '\0';
 				printf("\t{\n\t\t\"ban_timestamp\": \"%s\",\n", timestamp_str);
+				if (buf[0])
+					printf("\t\t\"spam_start_timestamp\": \"%s\",\n", buf);
 				printf("\t\t\"unban_timestamp\": \"%s\",\n", now_str);
 				printf("\t\t\"ban_duration\": %lu,\n", values[i].duration);
 				printf("\t\t\"ip\": \"%s\",\n", ip_str);
@@ -549,9 +582,8 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			}
 			/* Convert to seconds and Unix time */
 			rec.ban_duration /= NANOSECONDS_PER_SECOND;
-			int tai = get_tai_offset();
-			rec.ban_timestamp = (rec.ban_timestamp / NANOSECONDS_PER_SECOND) - tai;
-			rec.autounban_timestamp = (rec.autounban_timestamp / NANOSECONDS_PER_SECOND) - tai;
+			rec.ban_timestamp = (rec.ban_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
+			rec.autounban_timestamp = (rec.autounban_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
 			char *ban_timestamp_str = ctime((long*)&rec.ban_timestamp);
 			if (!ban_timestamp_str) {
 				perror("ctime");
@@ -573,6 +605,16 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			/* Strings from ctime already contain \n that messes up formatting here */
 			ban_timestamp_str[24] = unban_timestamp_str[24] = '\0';
 			printf("\t{\n\t\t\"ban_timestamp\": \"%s\",\n", ban_timestamp_str);
+			if (rec.spam_start_timestamp) {
+				rec.spam_start_timestamp = (rec.spam_start_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
+				char *spam_start_timestamp_str = ctime((long*)rec.spam_start_timestamp);
+				if (!spam_start_timestamp_str) {
+					perror("ctime");
+					exit(1);
+				}
+				spam_start_timestamp_str[24] = '\0';
+				printf("\t\t\"spam_start_timestamp\": \"%s\",\n", spam_start_timestamp_str);
+			}
 			printf("\t\t\"unban_timestamp\": \"%s\",\n", unban_timestamp_str);
 			printf("\t\t\"ban_duration\": %lu,\n", rec.ban_duration);
 			printf("\t\t\"ip\": \"%s\",\n", ip_str);
@@ -620,10 +662,13 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			printf("IP %s not banned\n", argv[2]);
 			exit(0);
 		}
-		char *timestamp_str = prepare_entry_for_printing(&entry);
+		char buf[26];
+		char *timestamp_str = prepare_entry_for_printing(&entry, buf);
 		/* Strings from ctime already contain \n */
 		printf("Found ban entry:\n");
 		printf("\tIP: %s\n", argv[2]);
+		if (buf[0])
+			printf("\tSpam Start Timestamp: %s", buf);
 		printf("\tTimestamp: %s", timestamp_str);
 		printf("\tDuration: %lu\n", entry.duration);
 		printf("\tLast seen on port: %u\n", entry.banned_on_last_port);
@@ -638,6 +683,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
+	tai_offset = get_tai_offset();
 	if (argc < 2) {
 		if (argc == 1)
 			fprintf(stderr, "Usage: %s <command>\nTry %s --help\n", argv[0], argv[0]);
