@@ -609,7 +609,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			printf("\t{\n\t\t\"ban_timestamp\": \"%s\",\n", ban_timestamp_str);
 			if (rec.spam_start_timestamp) {
 				rec.spam_start_timestamp = (rec.spam_start_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
-				char *spam_start_timestamp_str = ctime((long*)rec.spam_start_timestamp);
+				char *spam_start_timestamp_str = ctime((long*)&rec.spam_start_timestamp);
 				if (!spam_start_timestamp_str) {
 					perror("ctime");
 					exit(1);
