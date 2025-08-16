@@ -5,8 +5,6 @@
 
 #define PROTOCOL_ID		0x4f457403
 #define PEER_ID_INEXISTENT	0
-#define BLOCK_THRESHOLD		100
-#define IP_COUNT_RESET_NS	10000000000ULL	// 10 seconds
 
 struct ip_entry {
 	u64 count;
@@ -34,6 +32,11 @@ struct ban_record {
 	char desc[DESC_SIZE];
 };
 
+struct init_handler_config {
+	u32 block_threshold;
+	u64 ip_count_reset_ns;
+};
+
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 100);
@@ -56,7 +59,6 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } banned_ips SEC(".maps");
 
-/* Fill this map with bpftool */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 10);
@@ -64,6 +66,14 @@ struct {
 	__type(value, u8);
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } watched_ports SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, u32);
+	__type(value, struct init_handler_config);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} init_handler_config SEC(".maps");
 
 static __always_inline void safe_strcpy(char *dst, const char *src, u32 dst_size)
 {
@@ -90,40 +100,51 @@ int __noinline update_time(u64 now, u64 __arg_nonnull *time)
 	return 0;
 }
 
-/* Verifier checks each global (non-static) function as a separate program, so it loses trust in the payload bounds checks. Thus payload cannot be the argument. */
-int __noinline handle_init_packet(u32 proto_raw, u16 peer_raw, u32 src_ip, u16 src_port)
-{
-	u32 proto_id = bpf_ntohl(proto_raw);
-	u16 peer_id = bpf_ntohs(peer_raw);
+struct init_handler_args {
+	int retval;
+	u32 proto_id;
+	u16 peer_id;
+	u32 src_ip;
+	u16 port;
+};
 
-	if (proto_id == PROTOCOL_ID && peer_id == PEER_ID_INEXISTENT) {
-		struct ip_entry *entry = bpf_map_lookup_elem(&packet_count, &src_ip);
+#define CONTINUE_ITERATION	0
+#define HALT_ITERATION		1
+static long handle_init_packet(struct bpf_map *map, const void *key, void *value, void *ctx)
+{
+	struct init_handler_args *args = ctx;
+	struct init_handler_config *config = value;
+
+	if (args->proto_id == PROTOCOL_ID && args->peer_id == PEER_ID_INEXISTENT) {
+		struct ip_entry *entry = bpf_map_lookup_elem(&packet_count, &args->src_ip);
 		u64 now = bpf_ktime_get_tai_ns();
 		/* Return in this if, so that else isn't needed */
 		if (entry) {
 			u64 old_time = __sync_fetch_and_add(&entry->time, 0);
-			if (now > old_time && now - old_time > IP_COUNT_RESET_NS)
+			if (now > old_time && now - old_time > config->ip_count_reset_ns)
 				goto new_entry;
 
 			/* Increment and check threshold */
 			__sync_fetch_and_add(&entry->count, 1);
 			u64 new_count = __sync_fetch_and_add(&entry->count, 0);
-			if (new_count > BLOCK_THRESHOLD) {
+			if (new_count > config->block_threshold) {
 				/* Ban this IP and free the entry, as this handler won't run for it again */
 				struct ban_entry val = {
 					.timestamp = now,
 					.duration = 3600000000000ULL,   /* 1 hour */
-					.banned_on_last_port = src_port,
+					.banned_on_last_port = args->port,
 					.spam_start_timestamp = entry->first_seen
 				};
 				safe_strcpy(val.desc, "Init packet spam, autoban", DESC_SIZE);
-				bpf_map_update_elem(&banned_ips, &src_ip, &val, BPF_ANY);
-				bpf_map_delete_elem(&packet_count, &src_ip);
-				return XDP_DROP;
+				bpf_map_update_elem(&banned_ips, &args->src_ip, &val, BPF_ANY);
+				bpf_map_delete_elem(&packet_count, &args->src_ip);
+				args->retval = XDP_DROP;
+				return HALT_ITERATION;
 			}
 			/* Atomic CAS to update time */
 			update_time(now, &entry->time);
-			return XDP_PASS;
+			args->retval = XDP_PASS;
+			return CONTINUE_ITERATION;
 		}
 new_entry:
 		/* Avoid warning: label followed by a declaration is a C23 extension */
@@ -133,14 +154,15 @@ new_entry:
 			.time = now,
 			.first_seen = now
 		};
-		bpf_map_update_elem(&packet_count, &src_ip, &ent, BPF_ANY);
+		bpf_map_update_elem(&packet_count, &args->src_ip, &ent, BPF_ANY);
 	}
-	return XDP_PASS;
+	args->retval = XDP_PASS;
+	return CONTINUE_ITERATION;
 }
 
 int __noinline handle_bans(u32 src_ip)
 {
-	/* ban entries modified only using helper functions - no atomic operations needed */
+	/* ban entries are modified only using helper functions -> no atomic operations needed */
 	struct ban_entry *entry = bpf_map_lookup_elem(&banned_ips, &src_ip);
 	if (entry) {
 		u64 now = bpf_ktime_get_tai_ns();
@@ -215,9 +237,16 @@ int luanti_filter(struct xdp_md *ctx)
 	u16 peer_raw;
 	__builtin_memcpy(&proto_raw, payload, sizeof(proto_raw));
 	__builtin_memcpy(&peer_raw, payload + sizeof(proto_raw), sizeof(peer_raw));
-	ret = handle_init_packet(proto_raw, peer_raw, src_ip, port);
-	if (ret == XDP_DROP)
-		return ret;
+
+	struct init_handler_args args = {
+		.proto_id = bpf_ntohl(proto_raw),
+		.peer_id = bpf_ntohs(peer_raw),
+		.port = port,
+		.src_ip = src_ip
+	};
+	bpf_for_each_map_elem(&init_handler_config, handle_init_packet, &args, 0);
+	if (args.retval == XDP_DROP)
+		return XDP_DROP;
 
 	return XDP_PASS;
 }
