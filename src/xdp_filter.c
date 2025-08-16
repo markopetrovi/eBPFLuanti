@@ -5,6 +5,7 @@
 
 #define PROTOCOL_ID		0x4f457403
 #define PEER_ID_INEXISTENT	0
+#define NANOSECONDS_PER_SECOND	1000000000UL
 
 struct ip_entry {
 	u64 count;
@@ -75,16 +76,6 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } init_handler_config SEC(".maps");
 
-static __always_inline void safe_strcpy(char *dst, const char *src, u32 dst_size)
-{
-	for (u32 i = 0; i < dst_size; i++) {
-		char c = src[i];
-		dst[i] = c;
-		if (c == '\0')
-			break;
-	}
-}
-
 /* Global functions can only return scalar values */
 /* Atomic CAS to update time only if someone else didn't already update to a higher value */
 /* __arg_nonnull annotation added in 6.8 */
@@ -135,7 +126,8 @@ static long handle_init_packet(struct bpf_map *map, const void *key, void *value
 					.banned_on_last_port = args->port,
 					.spam_start_timestamp = entry->first_seen
 				};
-				safe_strcpy(val.desc, "Init packet spam, autoban", DESC_SIZE);
+				u64 data[2] = {config->block_threshold, config->ip_count_reset_ns / NANOSECONDS_PER_SECOND};
+				bpf_snprintf(val.desc, DESC_SIZE, "Init packet spam, autoban. Accumulated %u packets in %u seconds.", data, sizeof(data));
 				bpf_map_update_elem(&banned_ips, &args->src_ip, &val, BPF_ANY);
 				bpf_map_delete_elem(&packet_count, &args->src_ip);
 				args->retval = XDP_DROP;
