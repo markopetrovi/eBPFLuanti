@@ -36,10 +36,10 @@ struct map_fds {
 };
 
 union ipv4_addr {
-    uint32_t addr;
-    struct {
-        uint8_t a, b, c, d;
-    };
+	uint32_t addr;
+	struct {
+		uint8_t a, b, c, d;
+	};
 };
 
 #define DESC_SIZE 255
@@ -60,6 +60,11 @@ struct ban_record {
 	u32 ip;		/* IP in host byte order */
 	u16 banned_on_last_port;
 	char desc[DESC_SIZE];
+};
+
+struct init_handler_config {
+	u32 block_threshold;
+	u64 ip_count_reset_ns;
 };
 
 static struct map_fds open_maps(const char *map_dir, int map_ids)
@@ -244,6 +249,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		printf("unban <ip>: Unban this IP and print the data needed by caller to assemble a ban record\n");
 		printf("list_bans: List all bans currently in effect\n");
 		printf("is_banned <ip>: Check if the given IP is banned.\n");
+		printf("config <block_threshold> <ip_reset_time_ns>: Configure the automatic init packet handler. Specify how many packets (block_threshold) need to be sent without any pause in transmission longer than ip_reset_time_ns\n");
 		printf("fetch_logs: Pop elements from the records map and build records from expired entries in the banned_ips table. Output everything for logging purposes. Should only be called by the logging code, call manually only if you know what you're doing.\n");
 		exit(0);
 	}
@@ -351,7 +357,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		if (!entry.duration || *endptr != '\0') {
 			fprintf(stderr, "Failed to parse ban duration %s\n", argv[4]);
 			if (*endptr != '\0')
-				fprintf(stderr, "Found unrecognized character: %c", *endptr);
+				fprintf(stderr, "Found unrecognized character: %c\n", *endptr);
 			exit(1);
 		}
 		if (entry.duration > UINT64_MAX / NANOSECONDS_PER_SECOND)
@@ -675,6 +681,46 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		printf("\tDuration: %lu\n", entry.duration);
 		printf("\tLast seen on port: %u\n", entry.banned_on_last_port);
 		printf("\tDescription: %s\n", entry.desc);
+		exit(0);
+	}
+
+	if (!strcmp(argv[1], "config")) {
+		if (argc != 4) {
+			fprintf(stderr, "Usage: %s config <block_threshold> <ip_reset_time_ns>\n", argv[0]);
+			exit(1);
+		}
+		struct init_handler_config config;
+		char *endptr;
+		unsigned long block_thresh = strtoul(argv[2], &endptr, 10);
+		if (block_thresh > UINT32_MAX)
+			config.block_threshold = UINT32_MAX;
+		else
+			config.block_threshold = block_thresh;
+		if (!config.block_threshold || *endptr != '\0') {
+			fprintf(stderr, "Failed to parse block threshold %s\n", argv[4]);
+			if (*endptr != '\0')
+				fprintf(stderr, "Found unrecognized character: %c\n", *endptr);
+			exit(1);
+		}
+		config.ip_count_reset_ns = strtoull(argv[3], &endptr, 10);
+		if (!config.ip_count_reset_ns || *endptr != '\0') {
+			fprintf(stderr, "Failed to parse ip_reset_time_ns %s\n", argv[4]);
+			if (*endptr != '\0')
+				fprintf(stderr, "Found unrecognized character: %c\n", *endptr);
+			exit(1);
+		}
+		union bpf_attr attr;
+		memset(&attr, 0, sizeof(union bpf_attr));
+		struct map_fds fds = open_maps(map_dir, CONFIG_MAP);
+		attr.map_fd = fds.configfd;
+		attr.value = (u64) &config;
+		u64 key = 0;
+		attr.key = (u64) &key;
+		attr.flags = BPF_ANY;
+		if (syscall(SYS_bpf, BPF_MAP_UPDATE_ELEM, &attr, sizeof(union bpf_attr))) {
+			perror("BPF_MAP_UPDATE_ELEM init_handler_config");
+			exit(1);
+		}
 		exit(0);
 	}
 
