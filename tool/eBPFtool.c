@@ -33,7 +33,7 @@ static const char *getconfig(const char *name, const char *default_val)
 #define HELPER_PROG             16
 
 struct map_fds {
-	int banfd, portfd, recordfd, configfd;
+	int banfd, portfd, recordfd, configfd, helperfd;
 };
 
 union ipv4_addr {
@@ -51,6 +51,7 @@ struct ban_entry {
 	u64 duration;
 	u16 banned_on_last_port;
 	char desc[DESC_SIZE];
+	u64 state;
 };
 
 struct ban_record {
@@ -413,7 +414,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		}
 		entry.timestamp = (u64)ts.tv_nsec + (NANOSECONDS_PER_SECOND * (u64)ts.tv_sec);
 		entry.spam_start_timestamp = 0;
-		entry.state = 1;
+		entry.state = 1; // STATE_ACTIVE
 
 		union bpf_attr attr;
 		memset(&attr, 0, sizeof(union bpf_attr));

@@ -109,7 +109,7 @@ int handle_unconfigured_filter()
 			.ban_duration = 0,
 			.banned_on_last_port = 0,
 			.ip = 0,
-			.spam_start_timestamp = now,
+			.spam_start_timestamp = now
 		};
 		#define UNCONFIGURED_MSG "[WARNING]: This is not a ban. init_handler_config map isn't properly set up. This is a notification that the init packet filter cannot work properly"
 		__builtin_memcpy(rec.desc, UNCONFIGURED_MSG, sizeof(UNCONFIGURED_MSG));
