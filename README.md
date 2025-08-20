@@ -1,97 +1,104 @@
----
-
 # Luanti eBPF Network Filters
 
-This repository contains high-performance eBPF/XDP programs and a companion management tool designed to protect **Luanti** (formerly Minetest) servers from packet-based abuse, such as UDP spam and flooding.
+This repository provides high-performance eBPF/XDP programs and a management tool to protect **Luanti** (formerly Minetest) servers from packet-based abuse, such as UDP spam and flooding.
 
-eBPF (extended Berkeley Packet Filter) is a Linux kernel technology that allows loading verified, sandboxed programs directly into the kernel for safe, high-performance packet filtering. These programs can be JIT-compiled to native code for minimal latency while maintaining kernel stability.
-
----
+eBPF (extended Berkeley Packet Filter) is a Linux kernel technology that enables safe, sandboxed programs to run in the kernel for high-performance packet filtering. XDP (eXpress Data Path) processes packets at the earliest possible point in the network stack, often with JIT-compiled native code for minimal latency.
 
 ## Included Programs
 
-* **`xdp_filter`** – Filters and bans IPs that send too many UDP “init” packets matching the Luanti protocol format.
-* **`eBPFtool`** – A standalone command-line utility (no libbpf needed) for managing watched ports, bans, and logs.
-
----
+* **`xdp_filter`**: Filters and bans IPs sending excessive UDP "init" packets matching the Luanti protocol.
+* **`eBPFtool`**: A standalone CLI tool (no libbpf required) for managing ports, bans, and logs.
 
 ## Features
 
-* ⚡ **High-performance**: Runs at the XDP layer for minimal latency and maximum throughput.
+* ⚡ **High-performance**: Operates at the XDP layer for low latency and high throughput.
 * 🚫 **Dynamic IP banning**: Automatically blocks abusive IPs.
-* 🔁 **Auto-reset tracking**: Resets per-IP counters after a period of inactivity.
-* 🎯 **Port filtering**: Only inspects packets sent to explicitly watched ports.
-* 🛠 **Self-contained management tool**: Uses raw `SYS_bpf` syscalls—no extra libraries required.
-* 📜 **Detailed ban records**: Timestamps, duration, last seen port, and reason.
-* 📂 **Structured logs**: `fetch_logs` outputs a JSON array of `ban_record` entries for easy parsing.
+* 🔁 **Auto-reset tracking**: Clears per-IP counters after inactivity.
+* 🎯 **Port filtering**: Inspects only packets sent to specified ports.
+* 🛠 **Self-contained CLI**: Uses raw `SYS_bpf` syscalls, no external libraries.
+* 📜 **Detailed ban records**: Includes timestamps, duration, port, and reason.
+* 📂 **Structured logs**: Outputs `ban_record` entries as a JSON array.
 
----
+## Program Logic (xdp_filter)
 
-## Program Logic (xdp\_filter)
-
-The program detects and rate-limits UDP init packets:
-
+The `xdp_filter` program rate-limits UDP init packets with:
 * **Protocol ID**: `0x4f457403`
 * **Peer ID**: `0x0000` (inexistent)
-* **Threshold**: More than 100 packets in 10 seconds from the same IP ➝ ban
+* **Threshold**: >100 packets in 10 seconds from one IP triggers a ban.
 
 ### Data Structures (Maps)
 
 | Map Name        | Type     | Key             | Value               | Purpose                         |
-| --------------- | -------- | --------------- | ------------------- | ------------------------------- |
+|-----------------|----------|-----------------|---------------------|---------------------------------|
 | `packet_count`  | LRU Hash | `u32` IP        | `struct ip_entry`   | Tracks packet count + timestamp |
 | `records`       | Queue    | —               | `struct ban_record` | Ban event log queue             |
 | `banned_ips`    | Hash     | `u32` IP        | `struct ban_entry`  | Stores current bans             |
 | `watched_ports` | Hash     | `u16` port      | `u8`                | Ports to inspect for filtering  |
 
----
-
 ## Build and Usage
 
 ### 1. Build
 
-```sh
-make vmlinux   # Generates vmlinux.h for the eBPF program
-make           # Compiles the management tool and the eBPF program
-```
-
-### 2. Load / Unload the Filter
-
-> Loading/unloading is still done with the `ip` command.
+Build the eBPF program and management tool:
 
 ```sh
-sudo ip link set dev enp0s6 xdp obj xdp_filter.o sec xdp
-sudo ip link set dev enp0s6 xdp off
+make            # Generate vmlinux.h and compile xdp_filter.o, helper.o and eBPFtool
 ```
 
-### 3. Manage with eBPFtool
+**Requirements**: `clang`, `gcc`, `make`, `bpftool`, and a Linux kernel with eBPF/XDP support.
+
+### 2. Load/Unload XDP Filter
+
+Attach the XDP filter to a network interface (e.g., `eth0`):
+
+```sh
+sudo ip link set dev <interface> xdp obj xdp_filter.o sec xdp
+```
+
+Detach the XDP filter:
+
+```sh
+sudo ip link set dev <interface> xdp off
+```
+
+**Verify**: Check with `sudo ip link show dev <interface>` (look for `xdp` tag).
+
+**Note**: Replace `<interface>` with your network interface (e.g., `eth0`).
+
+### 3. Load/Pin Helper Program
+
+Load and pin the BPF helper program:
+
+```sh
+sudo bpftool prog load helper.o /sys/fs/bpf/xdp/globals/helper type syscall
+sudo bpftool prog pin helper.o /sys/fs/bpf/xdp/globals/helper
+```
+
+**Verify**: Run `sudo bpftool prog list` to confirm pinning.
+
+### 4. Unload Helper Program
+
+```sh
+sudo rm /sys/fs/bpf/xdp/globals/helper
+```
+
+### 5. Manage with eBPFtool
+
+Run the management tool:
 
 ```sh
 ./eBPFtool --help
 ```
 
-**Main commands:**
-
-* `dump_ports` – List watched ports
-* `add_port <port>` / `rm_port <port>` – Add/remove watched ports
-* `ban <port> <ip> <duration> <reason>` – Manually ban an IP
-* `unban <ip>` – Unban an IP
-* `list_bans` – Show current bans
-* `is_banned <ip>` - Check if an IP is currently banned
-* `fetch_logs` – Output a JSON array of `ban_record` entries from expired bans and the log queue
-
----
-
-## Requirements
-
-* Linux kernel with eBPF/XDP support (relatively recent version recommended)
-* `clang`, `gcc`, `make`, `bpftool`
-* Root privileges to load eBPF programs
-
----
+**Commands**:
+* `dump_ports`: List watched ports.
+* `add_port <port>` / `rm_port <port>`: Add/remove watched ports.
+* `ban <port> <ip> <duration> <reason>`: Manually ban an IP.
+* `unban <ip>`: Remove a ban.
+* `list_bans`: Show active bans.
+* `is_banned <ip>`: Check if an IP is banned.
+* `fetch_logs`: Output JSON array of `ban_record` entries.
 
 ## License
 
-MIT License
-
----
+Licensed under the GNU General Public License v3.0 (GPLv3). See the [LICENSE](./LICENSE) file for details.
