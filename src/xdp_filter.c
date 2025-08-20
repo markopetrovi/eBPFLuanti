@@ -8,6 +8,8 @@
 #define PROTOCOL_ID		0x4f457403
 #define PEER_ID_INEXISTENT	0
 #define NANOSECONDS_PER_SECOND	1000000000UL
+#define STATE_ACTIVE 1
+#define STATE_IN_DELETION 0
 
 struct ip_entry {
 	u64 count;
@@ -23,6 +25,7 @@ struct ban_entry {
 	u64 duration;
 	u16 banned_on_last_port;
 	char desc[DESC_SIZE];
+	u64 state;
 };
 
 struct ban_record {
@@ -106,7 +109,7 @@ int handle_unconfigured_filter()
 			.ban_duration = 0,
 			.banned_on_last_port = 0,
 			.ip = 0,
-			.spam_start_timestamp = now
+			.spam_start_timestamp = now,
 		};
 		#define UNCONFIGURED_MSG "[WARNING]: This is not a ban. init_handler_config map isn't properly set up. This is a notification that the init packet filter cannot work properly"
 		__builtin_memcpy(rec.desc, UNCONFIGURED_MSG, sizeof(UNCONFIGURED_MSG));
@@ -153,7 +156,8 @@ static long handle_init_packet(struct bpf_map *map, const void *key, void *value
 					.timestamp = now,
 					.duration = 3600000000000ULL,   /* 1 hour */
 					.banned_on_last_port = args->port,
-					.spam_start_timestamp = entry->first_seen
+					.spam_start_timestamp = entry->first_seen,
+					.state = STATE_ACTIVE
 				};
 				u64 data[] = {config->block_threshold, now - val.spam_start_timestamp, config->ip_count_reset_ns / NANOSECONDS_PER_SECOND};
 				bpf_snprintf(val.desc, DESC_SIZE, "Init packet spam, autoban. Sent %u packets during the time interval of %u seconds without any continuous %u second pause.", data, sizeof(data));
@@ -184,6 +188,7 @@ int __noinline handle_bans(u32 src_ip)
 	/* ban entries are modified only using helper functions -> no atomic operations needed */
 	struct ban_entry *entry = bpf_map_lookup_elem(&banned_ips, &src_ip);
 	if (entry) {
+        	if (entry->state == STATE_IN_DELETION) return XDP_DROP;
 		u64 now = bpf_ktime_get_tai_ns();
 		u64 expiration_moment = entry->timestamp + entry->duration;
 		/* Expiration moment passed and integer overflow didn't happen */
@@ -197,6 +202,7 @@ int __noinline handle_bans(u32 src_ip)
 				.spam_start_timestamp = entry->spam_start_timestamp
 			};
 			__builtin_memcpy(rec.desc, entry->desc, DESC_SIZE);
+			entry->state = STATE_IN_DELETION;
 			bpf_map_delete_elem(&banned_ips, &src_ip);
 			bpf_map_push_elem(&records, &rec, BPF_EXIST);
 			return XDP_PASS;
