@@ -185,31 +185,39 @@ new_entry:
 
 int __noinline handle_bans(u32 src_ip)
 {
-	/* ban entries are modified only using helper functions -> no atomic operations needed */
-	struct ban_entry *entry = bpf_map_lookup_elem(&banned_ips, &src_ip);
-	if (entry) {
-        	if (entry->state == STATE_IN_DELETION) return XDP_DROP;
-		u64 now = bpf_ktime_get_tai_ns();
-		u64 expiration_moment = entry->timestamp + entry->duration;
-		/* Expiration moment passed and integer overflow didn't happen */
-		if (expiration_moment < now && expiration_moment > entry->timestamp) {
-			struct ban_record rec = {
-				.ban_timestamp = entry->timestamp,
-				.autounban_timestamp = now,
-				.ban_duration = entry->duration,
-				.banned_on_last_port = entry->banned_on_last_port,
-				.ip = src_ip,
-				.spam_start_timestamp = entry->spam_start_timestamp
-			};
-			__builtin_memcpy(rec.desc, entry->desc, DESC_SIZE);
-			entry->state = STATE_IN_DELETION;
-			bpf_map_delete_elem(&banned_ips, &src_ip);
-			bpf_map_push_elem(&records, &rec, BPF_EXIST);
-			return XDP_PASS;
-		}
-		return XDP_DROP;
-	}
-	return XDP_PASS;
+    struct ban_entry *entry = bpf_map_lookup_elem(&banned_ips, &src_ip);
+    if (!entry)
+        return XDP_PASS;
+
+    if (entry->state == STATE_IN_DELETION)
+        return XDP_DROP;
+
+    u64 now = bpf_ktime_get_tai_ns();
+    u64 expiration_moment = entry->timestamp + entry->duration;
+
+    /* Check if ban has expired and no integer overflow occurred */
+    if (expiration_moment < now && expiration_moment > entry->timestamp) {
+        if (__sync_bool_compare_and_swap(&entry->state, STATE_ACTIVE, STATE_IN_DELETION)) {
+            /* Only one instance will succeed in setting STATE_IN_DELETION */
+            struct ban_record rec = {
+                .ban_timestamp = entry->timestamp,
+                .autounban_timestamp = now,
+                .ban_duration = entry->duration,
+                .banned_on_last_port = entry->banned_on_last_port,
+                .ip = src_ip,
+                .spam_start_timestamp = entry->spam_start_timestamp
+            };
+            __builtin_memcpy(rec.desc, entry->desc, DESC_SIZE);
+            bpf_map_delete_elem(&banned_ips, &src_ip);
+            bpf_map_push_elem(&records, &rec, BPF_EXIST);
+            return XDP_PASS;
+        }
+        /* If CAS failed, another instance already set STATE_IN_DELETION */
+        return XDP_DROP;
+    }
+
+    /* Ban is still active and not expired */
+    return XDP_DROP;
 }
 
 SEC("xdp")
