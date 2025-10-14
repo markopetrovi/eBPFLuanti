@@ -118,7 +118,7 @@ static long handle_init_packet(struct bpf_map *map, const void *key, void *value
 				/* Ban this IP and free the entry, as this handler won't run for it again */
 				struct ban_entry val = {
 					.timestamp = now,
-					.duration = 3600000000000ULL,   /* 1 hour */
+					.duration = config->autoban_time,
 					.banned_on_last_port = args->port,
 					.spam_start_timestamp = entry->first_seen,
 					.state = STATE_ACTIVE
