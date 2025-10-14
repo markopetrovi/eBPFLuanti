@@ -29,12 +29,15 @@ struct ban_record {
 struct init_handler_config {
 	u32 block_threshold;
 	u64 ip_count_reset_ns;
+	u64 autoban_time;
 };
 
 #ifdef __BPF__
 #define STATE_ACTIVE 1
 #define STATE_IN_DELETION 0
 
+/* Update only state with atomic instruction */
+/* state synchronizes deletion, so that we avoid TOCTOU */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 100);
@@ -43,6 +46,7 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } banned_ips SEC(".maps");
 
+/* Update only with helper functions */
 struct {
 	__uint(type, BPF_MAP_TYPE_QUEUE);
 	__uint(max_entries, 100);

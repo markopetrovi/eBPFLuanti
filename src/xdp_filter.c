@@ -18,6 +18,7 @@ struct ip_entry {
 	u64 first_seen;
 };
 
+/* Update with atomic instructions */
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 100);
@@ -25,6 +26,7 @@ struct {
 	__type(value, struct ip_entry);
 } packet_count SEC(".maps");
 
+/* Update only with helper functions */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 10);
