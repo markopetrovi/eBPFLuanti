@@ -18,13 +18,14 @@ eBPF (extended Berkeley Packet Filter) is a Linux kernel technology that enables
 * 🛠 **Self-contained CLI**: Uses raw `SYS_bpf` syscalls, no external libraries.
 * 📜 **Detailed ban records**: Includes timestamps, duration, port, and reason.
 * 📂 **Structured logs**: Outputs `ban_record` entries as a JSON array.
+* 🔧 **Configurable autoban**: Autoban parameters are dynamic variables instead of being hardcoded.
 
 ## Program Logic (xdp_filter)
 
 The `xdp_filter` program rate-limits UDP init packets with:
 * **Protocol ID**: `0x4f457403`
 * **Peer ID**: `0x0000` (inexistent)
-* **Threshold**: >100 packets in 10 seconds from one IP triggers a ban.
+* **Threshold**: More than <block_threshold> init packets without any continuous <ip_reset_time_ns> nanoseconds transmission break from one IP triggers a ban.
 
 ### Data Structures (Maps)
 
