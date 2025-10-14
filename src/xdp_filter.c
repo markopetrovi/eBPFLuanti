@@ -35,6 +35,15 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } watched_ports SEC(".maps");
 
+/* Update only with helper functions */
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, u32);
+	__type(value, struct init_handler_config);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} init_handler_config SEC(".maps");
+
 /* Global functions can only return scalar values */
 /* Atomic CAS to update time only if someone else didn't already update to a higher value */
 /* __arg_nonnull annotation added in 6.8 */
