@@ -13,7 +13,7 @@ struct ban_entry {
 	u64 duration;
 	u16 banned_on_last_port;
 	char desc[DESC_SIZE];
-	u64 state;
+	u8 state;
 };
 
 struct ban_record {
@@ -37,7 +37,7 @@ struct init_handler_config {
 #define STATE_IN_DELETION 0
 
 /* Update only state with atomic instruction */
-/* state synchronizes deletion, so that we avoid TOCTOU */
+/* state synchronizes deletion, so that we avoid TOCTOU and delete a newly created entry with the same key */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 100);
