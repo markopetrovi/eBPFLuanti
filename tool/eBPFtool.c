@@ -30,7 +30,7 @@ static const char *getconfig(const char *name, const char *default_val)
 #define RECORDS_MAP		2
 #define WATCHED_PORTS_MAP	4
 #define CONFIG_MAP		8
-#define HELPER_PROG             16
+#define HELPER_PROG		16
 
 struct map_fds {
 	int banfd, portfd, recordfd, configfd, helperfd;
@@ -116,13 +116,13 @@ static struct map_fds open_object(const char *object_dir, int map_ids)
 		}
 	}
 	if (map_ids & HELPER_PROG) {
-        	attr.pathname = (u64) "helper";
-        	fds.helperfd = syscall(SYS_bpf, BPF_OBJ_GET, &attr, sizeof(union bpf_attr));
-        	if (fds.helperfd < 0) {
-           		perror("BPF_OBJ_GET helper");
+		attr.pathname = (u64) "helper";
+		fds.helperfd = syscall(SYS_bpf, BPF_OBJ_GET, &attr, sizeof(union bpf_attr));
+		if (fds.helperfd < 0) {
+			perror("BPF_OBJ_GET helper");
 			exit(1);
-        	}
-    	}
+		}
+	}
 	close(dirfd);
 
 	return fds;
@@ -222,32 +222,32 @@ static char *prepare_entry_for_printing(struct ban_entry *entry, char *spam_star
 
 static char *prepare_record_for_printing(struct ban_record *record, char *spam_start_timestamp, char *ban_timestamp, char *autounban_timestamp)
 {
-    /* Convert to seconds and Unix time */
-    record->ban_duration /= NANOSECONDS_PER_SECOND;
-    record->ban_timestamp = (record->ban_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
-    ban_timestamp = ctime_r((long*)&record->ban_timestamp, ban_timestamp);
-    if (!ban_timestamp) {
-        perror("ctime_r");
-        exit(1);
-    }
-    record->autounban_timestamp = (record->autounban_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
-    autounban_timestamp = ctime_r((long*)&record->autounban_timestamp, autounban_timestamp);
-    if (!autounban_timestamp) {
-        perror("ctime_r");
-        exit(1);
-    }
-    if (record->spam_start_timestamp) {
-        record->spam_start_timestamp = (record->spam_start_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
-        spam_start_timestamp = ctime_r((long*)&record->spam_start_timestamp, spam_start_timestamp);
-        if (!spam_start_timestamp) {
-            perror("ctime_r");
-            exit(1);
-        }
-    }
-    else {
-        spam_start_timestamp[0] = '\0';
-    }
-    return ban_timestamp;
+	/* Convert to seconds and Unix time */
+	record->ban_duration /= NANOSECONDS_PER_SECOND;
+	record->ban_timestamp = (record->ban_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
+	ban_timestamp = ctime_r((long*)&record->ban_timestamp, ban_timestamp);
+	if (!ban_timestamp) {
+		perror("ctime_r");
+		exit(1);
+	}
+	record->autounban_timestamp = (record->autounban_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
+	autounban_timestamp = ctime_r((long*)&record->autounban_timestamp, autounban_timestamp);
+	if (!autounban_timestamp) {
+		perror("ctime_r");
+		exit(1);
+	}
+	if (record->spam_start_timestamp) {
+		record->spam_start_timestamp = (record->spam_start_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
+		spam_start_timestamp = ctime_r((long*)&record->spam_start_timestamp, spam_start_timestamp);
+		if (!spam_start_timestamp) {
+			perror("ctime_r");
+			exit(1);
+		}
+	}
+	else {
+		spam_start_timestamp[0] = '\0';
+	}
+	return ban_timestamp;
 }
 
 /* Simple escape for command-line strings (only " and \) */
@@ -529,82 +529,82 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		exit(0);
 	}
 
-        if (!strcmp(argv[1], "fetch_logs")) {
-            if (argc != 2) {
-                fprintf(stderr, "Usage: %s fetch_logs\n", argv[0]);
-                exit(1);
-            }
-            struct map_fds fds = open_object(object_dir, RECORDS_MAP | HELPER_PROG);
-            int prog_fd = fds.helperfd;
-            if (prog_fd < 0) {
-                fprintf(stderr, "Helper program not opened\n");
-                exit(1);
-            }
+	if (!strcmp(argv[1], "fetch_logs")) {
+		if (argc != 2) {
+			fprintf(stderr, "Usage: %s fetch_logs\n", argv[0]);
+			exit(1);
+		}
+		struct map_fds fds = open_object(object_dir, RECORDS_MAP | HELPER_PROG);
+		int prog_fd = fds.helperfd;
+		if (prog_fd < 0) {
+			fprintf(stderr, "Helper program not opened\n");
+			exit(1);
+		}
 
-            union bpf_attr attr;
-            memset(&attr, 0, sizeof(union bpf_attr));
-            attr.test.prog_fd = prog_fd;
-            attr.test.ctx_in = 0;
-            attr.test.ctx_size_in = 0;
-            if (syscall(SYS_bpf, BPF_PROG_RUN, &attr, sizeof(union bpf_attr))) {
-                perror("BPF_PROG_RUN helper");
-                close(prog_fd);
-                exit(1);
-            }
-            close(prog_fd);
+		union bpf_attr attr;
+		memset(&attr, 0, sizeof(union bpf_attr));
+		attr.test.prog_fd = prog_fd;
+		attr.test.ctx_in = 0;
+		attr.test.ctx_size_in = 0;
+		if (syscall(SYS_bpf, BPF_PROG_RUN, &attr, sizeof(union bpf_attr))) {
+			perror("BPF_PROG_RUN helper");
+			close(prog_fd);
+			exit(1);
+		}
+		close(prog_fd);
 
-            // Pop and print all records from the records map
-            union bpf_attr pop_attr;
-            struct ban_record record;
-            printf("[");
-            bool comma = false;
-            while (1) {
-                memset(&pop_attr, 0, sizeof(union bpf_attr));
-                pop_attr.map_fd = fds.recordfd;
-                pop_attr.value = (u64)&record;
-                if (syscall(SYS_bpf, BPF_MAP_LOOKUP_AND_DELETE_ELEM, &pop_attr, sizeof(union bpf_attr))) {
-                    if (errno == ENOENT) {
-                        break; // No more records
-                    }
-                    perror("BPF_MAP_LOOKUP_AND_DELETE_ELEM records");
-                    exit(1);
-                }
+		// Pop and print all records from the records map
+		union bpf_attr pop_attr;
+		struct ban_record record;
+		printf("[");
+		bool comma = false;
+		while (1) {
+			memset(&pop_attr, 0, sizeof(union bpf_attr));
+			pop_attr.map_fd = fds.recordfd;
+			pop_attr.value = (u64)&record;
+			if (syscall(SYS_bpf, BPF_MAP_LOOKUP_AND_DELETE_ELEM, &pop_attr, sizeof(union bpf_attr))) {
+				if (errno == ENOENT) {
+					break; // No more records
+				}
+				perror("BPF_MAP_LOOKUP_AND_DELETE_ELEM records");
+				exit(1);
+			}
 
-                struct in_addr addr;
-                addr.s_addr = htonl(record.ip);
-                char *ip_str = inet_ntoa(addr);
-                char spam_buf[26], ban_buf[26], unban_buf[26];
-                prepare_record_for_printing(&record, spam_buf, ban_buf, unban_buf);
-                if (comma) {
-                    printf(",\n");
-                } else {
-                    printf("\n");
-                }
-                comma = true;
-                ban_buf[24] = '\0';
-                unban_buf[24] = '\0';
-                if (spam_buf[0]) {
-                    spam_buf[24] = '\0';
-                }
-                printf("\t{\n");
-                printf("\t\t\"ban_timestamp\": \"%s\",\n", ban_buf);
-                printf("\t\t\"ban_timestamp\": \"%s\",\n", ban_buf);
-                if (spam_buf[0]) {
-                    printf("\t\t\"spam_start_timestamp\": \"%s\",\n", spam_buf);
-                }
-                printf("\t\t\"unban_timestamp\": \"%s\",\n", unban_buf);
-                printf("\t\t\"ban_duration\": %lu,\n", record.ban_duration);
-                printf("\t\t\"ip\": \"%s\",\n", ip_str);
-                printf("\t\t\"banned_on_last_port\": %u,\n", record.banned_on_last_port);
-                char *escaped_desc = simple_json_escape(record.desc);
-                printf("\t\t\"description\": \"%s\"\n\t}", escaped_desc);
-                if (escaped_desc != record.desc) {
-                    free(escaped_desc);
-                }
-            }
-            printf("\n]\n");
-            exit(0);
-        }
+			struct in_addr addr;
+			addr.s_addr = htonl(record.ip);
+			char *ip_str = inet_ntoa(addr);
+			char spam_buf[26], ban_buf[26], unban_buf[26];
+			prepare_record_for_printing(&record, spam_buf, ban_buf, unban_buf);
+			if (comma) {
+				printf(",\n");
+			} else {
+				printf("\n");
+			}
+			comma = true;
+			ban_buf[24] = '\0';
+			unban_buf[24] = '\0';
+			if (spam_buf[0]) {
+				spam_buf[24] = '\0';
+			}
+			printf("\t{\n");
+			printf("\t\t\"ban_timestamp\": \"%s\",\n", ban_buf);
+			printf("\t\t\"ban_timestamp\": \"%s\",\n", ban_buf);
+			if (spam_buf[0]) {
+				printf("\t\t\"spam_start_timestamp\": \"%s\",\n", spam_buf);
+			}
+			printf("\t\t\"unban_timestamp\": \"%s\",\n", unban_buf);
+			printf("\t\t\"ban_duration\": %lu,\n", record.ban_duration);
+			printf("\t\t\"ip\": \"%s\",\n", ip_str);
+			printf("\t\t\"banned_on_last_port\": %u,\n", record.banned_on_last_port);
+			char *escaped_desc = simple_json_escape(record.desc);
+			printf("\t\t\"description\": \"%s\"\n\t}", escaped_desc);
+			if (escaped_desc != record.desc) {
+				free(escaped_desc);
+			}
+		}
+		printf("\n]\n");
+		exit(0);
+	}
 
 	if (!strcmp(argv[1], "is_banned")) {
 		if (argc != 3) {
