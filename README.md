@@ -101,4 +101,4 @@ Run the management tool:
 
 ## License
 
-Licensed under the GNU General Public License v3.0 (GPLv3). See the [LICENSE](./LICENSE) file for details.
+Licensed under the GNU General Public License v2.0 (GPLv2). See the [LICENSE](./LICENSE) file for details.
