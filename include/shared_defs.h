@@ -3,6 +3,9 @@
 
 #define DESC_SIZE 255
 #define NANOSECONDS_PER_SECOND 1000000000UL
+/* !!!!! IPs and ports in maps are in host byte order !!!!!
+ * Reason: Correct display by bpftool
+ */
 
 struct ban_entry {
 	u64 spam_start_timestamp;
@@ -18,7 +21,7 @@ struct ban_record {
 	u64 ban_timestamp;
 	u64 autounban_timestamp;
 	u64 ban_duration;
-	u32 ip;		/* IP in host byte order */
+	u32 ip;
 	u16 banned_on_last_port;
 	char desc[DESC_SIZE];
 };

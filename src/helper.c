@@ -6,7 +6,7 @@
 #include <bpf/bpf_endian.h>
 #include <shared_defs.h>
 
-static long __noinline handle_ban_entry(void *map, void *key_ptr, void *value_ptr)
+static long __noinline handle_ban_entry(struct bpf_map *map, void *key_ptr, void *value_ptr, void *ctx)
 {
 	u32 *key = key_ptr;
 	struct ban_entry *entry = value_ptr;

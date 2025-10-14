@@ -9,6 +9,9 @@
 #define PROTOCOL_ID		0x4f457403
 #define PEER_ID_INEXISTENT	0
 
+/* !!!!! IPs and ports in maps are in host byte order !!!!!
+ * Reason: Correct display by bpftool
+ */
 struct ip_entry {
 	u64 count;
 	u64 time;
@@ -18,9 +21,17 @@ struct ip_entry {
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 100);
-	__type(key, u32);	/* IP in host byte order */
+	__type(key, u32);
 	__type(value, struct ip_entry);
 } packet_count SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 10);
+	__type(key, u16);
+	__type(value, u8);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} watched_ports SEC(".maps");
 
 /* Global functions can only return scalar values */
 /* Atomic CAS to update time only if someone else didn't already update to a higher value */
@@ -60,6 +71,7 @@ int handle_unconfigured_filter()
 	return 0;
 }
 
+/* All in host byte order */
 struct init_handler_args {
 	int retval;
 	u32 proto_id;
