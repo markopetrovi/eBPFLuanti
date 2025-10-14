@@ -57,10 +57,6 @@ clean:
 # Clean everything including vmlinux.h
 clean_all: clean
 	rm -f include/vmlinux.h
-	@if [ -d include ] && [ -z "$(ls -A include 2>/dev/null)" ]; then \
-		rmdir include; \
-		echo "Removed empty include directory"; \
-	fi
 
 # Phony targets
 .PHONY: all bpf tool vmlinux clean clean_all

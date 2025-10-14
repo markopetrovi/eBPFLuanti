@@ -18,7 +18,7 @@
 #define u16 uint16_t
 #define u32 uint32_t
 #define u64 uint64_t
-#define NANOSECONDS_PER_SECOND 1000000000UL
+#include <shared_defs.h>
 
 static const char *getconfig(const char *name, const char *default_val)
 {
@@ -41,32 +41,6 @@ union ipv4_addr {
 	struct {
 		uint8_t a, b, c, d;
 	};
-};
-
-#define DESC_SIZE 255
-
-struct ban_entry {
-	u64 spam_start_timestamp;
-	u64 timestamp;
-	u64 duration;
-	u16 banned_on_last_port;
-	char desc[DESC_SIZE];
-	u64 state;
-};
-
-struct ban_record {
-	u64 spam_start_timestamp;
-	u64 ban_timestamp;
-	u64 autounban_timestamp;
-	u64 ban_duration;
-	u32 ip;		/* IP in host byte order */
-	u16 banned_on_last_port;
-	char desc[DESC_SIZE];
-};
-
-struct init_handler_config {
-	u32 block_threshold;
-	u64 ip_count_reset_ns;
 };
 
 static struct map_fds open_object(const char *object_dir, int map_ids)

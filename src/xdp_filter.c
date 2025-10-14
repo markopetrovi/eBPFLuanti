@@ -3,44 +3,16 @@
 #include "../include/vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+#include <shared_defs.h>
 #define ETH_P_IP		0x0800
 
 #define PROTOCOL_ID		0x4f457403
 #define PEER_ID_INEXISTENT	0
-#define NANOSECONDS_PER_SECOND	1000000000UL
-#define STATE_ACTIVE 1
-#define STATE_IN_DELETION 0
 
 struct ip_entry {
 	u64 count;
 	u64 time;
 	u64 first_seen;
-};
-
-#define DESC_SIZE 255
-
-struct ban_entry {
-	u64 spam_start_timestamp;
-	u64 timestamp;
-	u64 duration;
-	u16 banned_on_last_port;
-	char desc[DESC_SIZE];
-	u64 state;
-};
-
-struct ban_record {
-	u64 spam_start_timestamp;
-	u64 ban_timestamp;
-	u64 autounban_timestamp;
-	u64 ban_duration;
-	u32 ip;		/* IP in host byte order */
-	u16 banned_on_last_port;
-	char desc[DESC_SIZE];
-};
-
-struct init_handler_config {
-	u32 block_threshold;
-	u64 ip_count_reset_ns;
 };
 
 struct {
@@ -49,37 +21,6 @@ struct {
 	__type(key, u32);	/* IP in host byte order */
 	__type(value, struct ip_entry);
 } packet_count SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_QUEUE);
-	__uint(max_entries, 100);
-	__uint(value_size, sizeof(struct ban_record));
-	__uint(pinning, LIBBPF_PIN_BY_NAME);
-} records SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 100);
-	__type(key, u32);	/* IP in host byte order */
-	__type(value, struct ban_entry);
-	__uint(pinning, LIBBPF_PIN_BY_NAME);
-} banned_ips SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 10);
-	__type(key, u16);	/* Port in host byte order, so that it's displayed correctly by bpftool map dump */
-	__type(value, u8);
-	__uint(pinning, LIBBPF_PIN_BY_NAME);
-} watched_ports SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_ARRAY);
-	__uint(max_entries, 1);
-	__type(key, u32);
-	__type(value, struct init_handler_config);
-	__uint(pinning, LIBBPF_PIN_BY_NAME);
-} init_handler_config SEC(".maps");
 
 /* Global functions can only return scalar values */
 /* Atomic CAS to update time only if someone else didn't already update to a higher value */

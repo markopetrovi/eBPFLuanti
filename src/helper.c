@@ -4,45 +4,7 @@
 #include "../include/vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
-
-#define STATE_ACTIVE 1
-#define STATE_IN_DELETION 0
-#define DESC_SIZE 255
-#define NANOSECONDS_PER_SECOND 1000000000UL
-
-struct ban_entry {
-	u64 spam_start_timestamp;
-	u64 timestamp;
-	u64 duration;
-	u16 banned_on_last_port;
-	char desc[DESC_SIZE];
-	u64 state;
-};
-
-struct ban_record {
-	u64 spam_start_timestamp;
-	u64 ban_timestamp;
-	u64 autounban_timestamp;
-	u64 ban_duration;
-	u32 ip;
-	u16 banned_on_last_port;
-	char desc[DESC_SIZE];
-};
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 100);
-	__type(key, u32);
-	__type(value, struct ban_entry);
-	__uint(pinning, LIBBPF_PIN_BY_NAME);
-} banned_ips SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_QUEUE);
-	__uint(max_entries, 100);
-	__uint(value_size, sizeof(struct ban_record));
-	__uint(pinning, LIBBPF_PIN_BY_NAME);
-} records SEC(".maps");
+#include <shared_defs.h>
 
 static long __noinline handle_ban_entry(void *map, void *key_ptr, void *value_ptr)
 {

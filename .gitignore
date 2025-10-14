@@ -1,6 +1,6 @@
 # Dynamically generated content
 /bin/
-/include/
+/include/vmlinux.h
 
 # Prerequisites
 *.d
