@@ -30,9 +30,10 @@ static const char *getconfig(const char *name, const char *default_val)
 #define RECORDS_MAP		2
 #define WATCHED_PORTS_MAP	4
 #define CONFIG_MAP		8
+#define HELPER_PROG             16
 
 struct map_fds {
-	int banfd, portfd, recordfd, configfd;
+	int banfd, portfd, recordfd, configfd, helperfd;
 };
 
 union ipv4_addr {
@@ -50,6 +51,7 @@ struct ban_entry {
 	u64 duration;
 	u16 banned_on_last_port;
 	char desc[DESC_SIZE];
+	u64 state;
 };
 
 struct ban_record {
@@ -67,14 +69,14 @@ struct init_handler_config {
 	u64 ip_count_reset_ns;
 };
 
-static struct map_fds open_maps(const char *map_dir, int map_ids)
+static struct map_fds open_object(const char *object_dir, int map_ids)
 {
 	struct map_fds fds;
 	union bpf_attr attr;
 
-	int dirfd = open(map_dir, O_PATH);
+	int dirfd = open(object_dir, O_PATH);
 	if (dirfd < 0) {
-		perror("open(map_dir)");
+		perror("open(object_dir)");
 		exit(1);
 	}
 	memset(&attr, 0, sizeof(union bpf_attr));
@@ -113,6 +115,15 @@ static struct map_fds open_maps(const char *map_dir, int map_ids)
 			exit(1);
 		}
 	}
+	if (map_ids & HELPER_PROG) {
+        	attr.pathname = (u64) "helper";
+        	fds.helperfd = syscall(SYS_bpf, BPF_OBJ_GET, &attr, sizeof(union bpf_attr));
+        	if (fds.helperfd < 0) {
+           		 perror("BPF_OBJ_GET helper");
+            		close(dirfd);
+            		exit(1);
+        	}
+    	}
 	close(dirfd);
 
 	return fds;
@@ -210,6 +221,36 @@ static char *prepare_entry_for_printing(struct ban_entry *entry, char *spam_star
 	return timestamp_str;
 }
 
+static char *prepare_record_for_printing(struct ban_record *record, char *spam_start_timestamp, char *ban_timestamp, char *autounban_timestamp)
+{
+    /* Convert to seconds and Unix time */
+    record->ban_duration /= NANOSECONDS_PER_SECOND;
+    record->ban_timestamp = (record->ban_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
+    ban_timestamp = ctime_r((long*)&record->ban_timestamp, ban_timestamp);
+    if (!ban_timestamp) {
+        perror("ctime_r");
+        exit(1);
+    }
+    record->autounban_timestamp = (record->autounban_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
+    autounban_timestamp = ctime_r((long*)&record->autounban_timestamp, autounban_timestamp);
+    if (!autounban_timestamp) {
+        perror("ctime_r");
+        exit(1);
+    }
+    if (record->spam_start_timestamp) {
+        record->spam_start_timestamp = (record->spam_start_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
+        spam_start_timestamp = ctime_r((long*)&record->spam_start_timestamp, spam_start_timestamp);
+        if (!spam_start_timestamp) {
+            perror("ctime_r");
+            exit(1);
+        }
+    }
+    else {
+        spam_start_timestamp[0] = '\0';
+    }
+    return ban_timestamp;
+}
+
 /* Simple escape for command-line strings (only " and \) */
 static char* simple_json_escape(char* str)
 {
@@ -253,14 +294,14 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		printf("fetch_logs: Pop elements from the records map and build records from expired entries in the banned_ips table. Output everything for logging purposes. Should only be called by the logging code, call manually only if you know what you're doing.\n");
 		exit(0);
 	}
-	const char *map_dir = getconfig("MAP_DIR", "/sys/fs/bpf/xdp/globals");
+	const char *object_dir = getconfig("MAP_DIR", "/sys/fs/bpf/xdp/globals");
 
 	if (!strcmp(argv[1], "dump_ports")) {
 		if (argc != 2) {
 			fprintf(stderr, "Usage: %s dump_ports\n", argv[0]);
 			exit(1);
 		}
-		struct map_fds fds = open_maps(map_dir, WATCHED_PORTS_MAP);
+		struct map_fds fds = open_object(object_dir, WATCHED_PORTS_MAP);
 		dump_ports(fds.portfd);
 		exit(0);
 	}
@@ -270,7 +311,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			fprintf(stderr, "Usage: %s add_port <port1> [port2] ... [portN]\n", argv[0]);
 			exit(1);
 		}
-		struct map_fds fds = open_maps(map_dir, WATCHED_PORTS_MAP);
+		struct map_fds fds = open_object(object_dir, WATCHED_PORTS_MAP);
 		union bpf_attr attr;
 		memset(&attr, 0, sizeof(union bpf_attr));
 		attr.map_fd = fds.portfd;
@@ -302,7 +343,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			fprintf(stderr, "Usage: %s rm_port <port1> [port2] ... [portN]\n", argv[0]);
 			exit(1);
 		}
-		struct map_fds fds = open_maps(map_dir, WATCHED_PORTS_MAP);
+		struct map_fds fds = open_object(object_dir, WATCHED_PORTS_MAP);
 		union bpf_attr attr;
 		memset(&attr, 0, sizeof(union bpf_attr));
 		attr.batch.map_fd = fds.portfd;
@@ -338,7 +379,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			fprintf(stderr, "Usage: %s ban <port (if you're in shell)> <ip> <duration_seconds> <reason>\n", argv[0]);
 			exit(1);
 		}
-		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
+		struct map_fds fds = open_object(object_dir, BANNED_IPS_MAP);
 		struct ban_entry entry;
 		int port = atoi(argv[2]);
 		if (port <= 0 || port > 65535) {
@@ -373,6 +414,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		}
 		entry.timestamp = (u64)ts.tv_nsec + (NANOSECONDS_PER_SECOND * (u64)ts.tv_sec);
 		entry.spam_start_timestamp = 0;
+		entry.state = 1; // STATE_ACTIVE
 
 		union bpf_attr attr;
 		memset(&attr, 0, sizeof(union bpf_attr));
@@ -395,7 +437,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			fprintf(stderr, "Usage: %s unban <ip>\n", argv[0]);
 			exit(1);
 		}
-		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
+		struct map_fds fds = open_object(object_dir, BANNED_IPS_MAP);
 		struct in_addr addr;
 		if (inet_pton(AF_INET, argv[2], &addr) != 1) {
 			fprintf(stderr, "Invalid IPv4 address %s\n", argv[2]);
@@ -440,7 +482,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 			fprintf(stderr, "Usage: %s list_bans\n", argv[0]);
 			exit(1);
 		}
-		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
+		struct map_fds fds = open_object(object_dir, BANNED_IPS_MAP);
 		union bpf_attr attr;
 		memset(&attr, 0, sizeof(union bpf_attr));
 		u32 keys[10];	/* IPs in host byte order */
@@ -488,160 +530,89 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		exit(0);
 	}
 
-	if (!strcmp(argv[1], "fetch_logs")) {
-		if (argc != 2) {
-			fprintf(stderr, "Usage: %s fetch_logs\n", argv[0]);
-			exit(1);
-		}
-		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP | RECORDS_MAP);
-		union bpf_attr attr;
-		union bpf_attr delete_attr;
-		memset(&attr, 0, sizeof(union bpf_attr));
-		memset(&delete_attr, 0, sizeof(union bpf_attr));
-		u32 keys[10];	/* IPs in host byte order */
-		u32 keys_to_delete[10];
-		struct ban_entry values[10];
-		u32 batch_params[2] = {0, 0};
-		delete_attr.batch.map_fd = fds.banfd;
-		attr.batch.map_fd = fds.banfd;
-		attr.batch.in_batch = (u64) &batch_params[0];
-		attr.batch.out_batch = (u64) &batch_params[1];
-		attr.batch.keys = (u64) keys;
-		delete_attr.batch.keys = (u64) keys_to_delete;
-		attr.batch.values = (u64) values;
+        if (!strcmp(argv[1], "fetch_logs")) {
+            if (argc != 2) {
+                fprintf(stderr, "Usage: %s fetch_logs\n", argv[0]);
+                exit(1);
+            }
+            struct map_fds fds = open_object(object_dir, BANNED_IPS_MAP | RECORDS_MAP | HELPER_PROG);
+            int prog_fd = fds.helperfd;
+            if (prog_fd < 0) {
+                fprintf(stderr, "Helper program not opened\n");
+                exit(1);
+            }
 
-		time_t now = time(NULL);
-		char buf[26];
-		char *now_str = ctime_r(&now, buf);
-		if (!now_str) {
-			perror("ctime_r");
-			exit(1);
-		}
-		/* Strings from ctime already contain \n that messes up formatting here */
-		now_str[24] = '\0';
+            union bpf_attr attr;
+            memset(&attr, 0, sizeof(union bpf_attr));
+            attr.test.prog_fd = prog_fd;
+            attr.test.ctx_in = 0;
+            attr.test.ctx_size_in = 0;
+            if (syscall(SYS_bpf, BPF_PROG_RUN, &attr, sizeof(union bpf_attr))) {
+                perror("BPF_PROG_RUN helper");
+                close(prog_fd);
+                exit(1);
+            }
+            close(prog_fd);
 
-		printf("[");
-		int saved_errno = 0;
-		/* In JSON, add , after each } but not after the last one, and obviously not before the first entry */
-		bool comma = false;
-		do {
-			attr.batch.count = 10;
-			/* ENOENT means we just didn't have enough entries to fill a batch of 10 */
-			if (syscall(SYS_bpf, BPF_MAP_LOOKUP_BATCH, &attr, sizeof(union bpf_attr)) && errno != ENOENT) {
-				perror("bpf(BPF_MAP_LOOKUP_BATCH banned_ips)");
-				exit(1);
-			}
-			saved_errno = errno;
-			int *res = find_expired_bans(values, attr.batch.count);
-			delete_attr.batch.count = 0;
-			for (int i = 0; res[i] != -1; i++) {
-				/* values[res[i]] are expired entries that we iterate over */
-				/* keys[res[i]] are corresponding IPs */
-				delete_attr.batch.count++;
-				keys_to_delete[i] = keys[res[i]];
+            // Pop and print all records from the records map
+            union bpf_attr pop_attr;
+            struct ban_record record;
+            printf("[");
+            bool comma = false;
+            while (1) {
+                memset(&pop_attr, 0, sizeof(union bpf_attr));
+                pop_attr.map_fd = fds.recordfd;
+                pop_attr.value = (u64)&record;
+                if (syscall(SYS_bpf, BPF_MAP_LOOKUP_AND_DELETE_ELEM, &pop_attr, sizeof(union bpf_attr))) {
+                    if (errno == ENOENT) {
+                        break; // No more records
+                    }
+                    perror("BPF_MAP_LOOKUP_AND_DELETE_ELEM records");
+                    exit(1);
+                }
 
-				struct in_addr addr;
-				addr.s_addr = htonl(keys[i]);
-				char *ip_str = inet_ntoa(addr);
-				char buf[26];
-				char *timestamp_str = prepare_entry_for_printing(&values[i], buf);
-				if (comma)
-					printf(",\n");
-				else
-					printf("\n");
-				comma = true;
-
-				/* Strings from ctime already contain \n that messes up formatting here */
-				timestamp_str[24] = '\0';
-				buf[24] = '\0';
-				printf("\t{\n\t\t\"ban_timestamp\": \"%s\",\n", timestamp_str);
-				if (buf[0])
-					printf("\t\t\"spam_start_timestamp\": \"%s\",\n", buf);
-				printf("\t\t\"unban_timestamp\": \"%s\",\n", now_str);
-				printf("\t\t\"ban_duration\": %lu,\n", values[i].duration);
-				printf("\t\t\"ip\": \"%s\",\n", ip_str);
-				printf("\t\t\"banned_on_last_port\": %u,\n", values[i].banned_on_last_port);
-				char *escaped_desc = simple_json_escape(values[i].desc);
-				printf("\t\t\"description\": \"%s\"\n\t}", escaped_desc);
-				if (escaped_desc != values[i].desc)
-					free(escaped_desc);
-			}
-			free(res);
-
-			/* ENOENT might mean that the eBPF program deleted some entry in the meantime */
-			if (syscall(SYS_bpf, BPF_MAP_DELETE_BATCH, &delete_attr, sizeof(union bpf_attr)) && errno != ENOENT) {
-				perror("bpf(BPF_MAP_DELETE_BATCH banned_ips)");
-				exit(1);
-			}
-			* (u32*)attr.batch.in_batch = * (u32*)attr.batch.out_batch;
-		} while (saved_errno != ENOENT);
-
-		/* Now handle the records queue */
-		memset(&attr, 0, sizeof(union bpf_attr));
-		struct ban_record rec;
-		attr.map_fd = fds.recordfd;
-		attr.value = (u64) &rec;
-		while (1) {
-			if (syscall(SYS_bpf, BPF_MAP_LOOKUP_AND_DELETE_ELEM, &attr, sizeof(union bpf_attr))) {
-				if (errno == ENOENT)
-					break;
-				perror("BPF_MAP_LOOKUP_AND_DELETE_ELEM records");
-				exit(1);
-			}
-			/* Convert to seconds and Unix time */
-			rec.ban_duration /= NANOSECONDS_PER_SECOND;
-			rec.ban_timestamp = (rec.ban_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
-			rec.autounban_timestamp = (rec.autounban_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
-			char *ban_timestamp_str = ctime((long*)&rec.ban_timestamp);
-			if (!ban_timestamp_str) {
-				perror("ctime");
-				exit(1);
-			}
-			char *unban_timestamp_str = ctime_r((long*)&rec.autounban_timestamp, buf);
-			if (!unban_timestamp_str) {
-				perror("ctime_r");
-				exit(1);
-			}
-			struct in_addr addr;
-			addr.s_addr = htonl(rec.ip);
-			char *ip_str = inet_ntoa(addr);
-			if (comma)
-				printf(",\n");
-			else
-				printf("\n");
-			comma = true;
-			/* Strings from ctime already contain \n that messes up formatting here */
-			ban_timestamp_str[24] = unban_timestamp_str[24] = '\0';
-			printf("\t{\n\t\t\"ban_timestamp\": \"%s\",\n", ban_timestamp_str);
-			if (rec.spam_start_timestamp) {
-				rec.spam_start_timestamp = (rec.spam_start_timestamp / NANOSECONDS_PER_SECOND) - tai_offset;
-				char *spam_start_timestamp_str = ctime((long*)&rec.spam_start_timestamp);
-				if (!spam_start_timestamp_str) {
-					perror("ctime");
-					exit(1);
-				}
-				spam_start_timestamp_str[24] = '\0';
-				printf("\t\t\"spam_start_timestamp\": \"%s\",\n", spam_start_timestamp_str);
-			}
-			printf("\t\t\"unban_timestamp\": \"%s\",\n", unban_timestamp_str);
-			printf("\t\t\"ban_duration\": %lu,\n", rec.ban_duration);
-			printf("\t\t\"ip\": \"%s\",\n", ip_str);
-			printf("\t\t\"banned_on_last_port\": %u,\n", rec.banned_on_last_port);
-			char *escaped_desc = simple_json_escape(rec.desc);
-			printf("\t\t\"description\": \"%s\"\n\t}", escaped_desc);
-			if (escaped_desc != rec.desc)
-				free(escaped_desc);
-		}
-		printf("\n]\n");
-		exit(0);
-	}
+                struct in_addr addr;
+                addr.s_addr = htonl(record.ip);
+                char *ip_str = inet_ntoa(addr);
+                char spam_buf[26], ban_buf[26], unban_buf[26];
+                prepare_record_for_printing(&record, spam_buf, ban_buf, unban_buf);
+                if (comma) {
+                    printf(",\n");
+                } else {
+                    printf("\n");
+                }
+                comma = true;
+                ban_buf[24] = '\0';
+                unban_buf[24] = '\0';
+                if (spam_buf[0]) {
+                    spam_buf[24] = '\0';
+                }
+                printf("\t{\n");
+                printf("\t\t\"ban_timestamp\": \"%s\",\n", ban_buf);
+                printf("\t\t\"ban_timestamp\": \"%s\",\n", ban_buf);
+                if (spam_buf[0]) {
+                    printf("\t\t\"spam_start_timestamp\": \"%s\",\n", spam_buf);
+                }
+                printf("\t\t\"unban_timestamp\": \"%s\",\n", unban_buf);
+                printf("\t\t\"ban_duration\": %lu,\n", record.ban_duration);
+                printf("\t\t\"ip\": \"%s\",\n", ip_str);
+                printf("\t\t\"banned_on_last_port\": %u,\n", record.banned_on_last_port);
+                char *escaped_desc = simple_json_escape(record.desc);
+                printf("\t\t\"description\": \"%s\"\n\t}", escaped_desc);
+                if (escaped_desc != record.desc) {
+                    free(escaped_desc);
+                }
+            }
+            printf("\n]\n");
+            exit(0);
+        }
 
 	if (!strcmp(argv[1], "is_banned")) {
 		if (argc != 3) {
 			fprintf(stderr, "Usage: %s is_banned <ip>\n", argv[0]);
 			exit(1);
 		}
-		struct map_fds fds = open_maps(map_dir, BANNED_IPS_MAP);
+		struct map_fds fds = open_object(object_dir, BANNED_IPS_MAP);
 		struct in_addr addr;
 		if (inet_pton(AF_INET, argv[2], &addr) != 1) {
 			fprintf(stderr, "Invalid IPv4 address %s\n", argv[2]);
@@ -711,7 +682,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
 		}
 		union bpf_attr attr;
 		memset(&attr, 0, sizeof(union bpf_attr));
-		struct map_fds fds = open_maps(map_dir, CONFIG_MAP);
+		struct map_fds fds = open_object(object_dir, CONFIG_MAP);
 		attr.map_fd = fds.configfd;
 		attr.value = (u64) &config;
 		u64 key = 0;
