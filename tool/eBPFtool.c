@@ -119,9 +119,8 @@ static struct map_fds open_object(const char *object_dir, int map_ids)
         	attr.pathname = (u64) "helper";
         	fds.helperfd = syscall(SYS_bpf, BPF_OBJ_GET, &attr, sizeof(union bpf_attr));
         	if (fds.helperfd < 0) {
-           		 perror("BPF_OBJ_GET helper");
-            		close(dirfd);
-            		exit(1);
+           		perror("BPF_OBJ_GET helper");
+			exit(1);
         	}
     	}
 	close(dirfd);
@@ -535,7 +534,7 @@ static void __attribute__((noreturn)) dispatch_command(int argc, char *argv[])
                 fprintf(stderr, "Usage: %s fetch_logs\n", argv[0]);
                 exit(1);
             }
-            struct map_fds fds = open_object(object_dir, BANNED_IPS_MAP | RECORDS_MAP | HELPER_PROG);
+            struct map_fds fds = open_object(object_dir, RECORDS_MAP | HELPER_PROG);
             int prog_fd = fds.helperfd;
             if (prog_fd < 0) {
                 fprintf(stderr, "Helper program not opened\n");
